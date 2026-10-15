@@ -2,7 +2,7 @@
 
 Author: Ahmed Ahmed
 
-[Repository](https://github.com/ahmedshehata08-sis/tomasulo-simulator) ·
+[Repository](https://github.com/ahmedshehata08-iss/tomasulo-simulator) ·
 [PDF report](REPORT.pdf)
 
 This submission implements in-order issue widths 1-4 with register renaming,
@@ -119,7 +119,12 @@ checks. Timing expectations are checked separately from the functional oracle.
 final-state agreement with the oracle. Hardware is held fixed within each
 benchmark. `results/summary.csv` and `summary.json` contain the comparison;
 28 text and 28 JSON files retain the full traces. `results/test_log.txt`
-records the test run. `REPORT.pdf` summarizes changes and measured results.
+records the test run. `REPORT.pdf` contains the two required assignment sections:
+"Brief description what you have added to the code" and
+"Show results of test cases under different issue width". The code was rerun
+on October 15, 2026: 44 test methods, 72 seeded differential configurations,
+and all 28 benchmark configurations passed. See `results/validation.json`,
+`results/experiment_log.txt`, and `results/cli_smoke_log.txt` for the rerun evidence.
 
 No known failing cases remain in the included tests. This is a functional
 teaching simulator: FP arithmetic is not a bit-accurate IEEE ISA model, and

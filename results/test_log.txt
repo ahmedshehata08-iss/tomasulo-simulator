@@ -44,6 +44,6 @@ test_rs_freed_at_execution_reusable_next_cycle (test_simulator.TimingTests.test_
 test_simple_add_timing (test_simulator.TimingTests.test_simple_add_timing) ... ok
 
 ----------------------------------------------------------------------
-Ran 44 tests in 0.345s
+Ran 44 tests in 0.280s
 
 OK

@@ -1,9 +1,47 @@
 {
   "python": "3.12.14",
-  "platform": "Linux",
+  "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
+  "source_commit": "739dabd944cdce19ceb9cc5e4a6baa4566b1fc5f",
+  "started_at_utc": "2026-10-15T23:38:09.415880+00:00",
+  "completed_at_utc": "2026-10-15T23:38:09.886903+00:00",
+  "completed_at_local": "2026-10-15T18:38:09.886903-05:00",
+  "local_timezone": "America/Chicago",
+  "commands": [
+    {
+      "command": "python3 -m unittest discover -s tests -v",
+      "exit_code": 0,
+      "log": "results/test_log.txt"
+    },
+    {
+      "command": "python3 run_experiments.py",
+      "exit_code": 0,
+      "log": "results/experiment_log.txt"
+    },
+    {
+      "command": "python3 main.py benchmarks/corrected_starter.in --issue-width 4",
+      "exit_code": 0,
+      "log": "results/cli_smoke_log.txt"
+    }
+  ],
   "test_command": "python3 -m unittest discover -s tests -v",
   "exit_code": 0,
   "test_methods": 44,
+  "test_runtime_seconds": 0.28,
   "seeded_differential_configurations": 72,
-  "experiment_configurations": 28
+  "seeded_differential_breakdown": {
+    "test_seeded_random_straight_line_programs": 40,
+    "test_seeded_bounded_branch_programs": 32
+  },
+  "seeded_differential_count_method": "AST inspection of seed and issue-width range loops in tests/test_simulator.py",
+  "experiment_configurations": 28,
+  "benchmark_count": 7,
+  "issue_widths": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "all_experiment_architectural_results_match_oracle": true,
+  "summary_unchanged_from_previous_run": true,
+  "cli_smoke_status": "PASS"
 }
