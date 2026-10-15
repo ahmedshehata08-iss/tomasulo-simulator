@@ -1,0 +1,44 @@
+TOMASULO SIMULATION | issue width 2
+Total cycles: 34
+
+  ID   PC INSTRUCTION                   ISSUE        EX       MEM    WB COMMIT STATUS
+   1    0 Addi R10 R0 4                     1       2-5         -     6      7 committed
+   2    4 Add R11 R10 R10                   1     10-13         -    14     15 committed
+   3    8 Add R12 R11 R11                   2     15-18         -    19     20 committed
+   4   12 Sd F1 0(R12)                      2        20     21-22     -     22 committed
+   5   16 Ld F2 16(R0)                      3         4       5-6     7      - squashed
+   6   20 Add.d F3 F2 F1                    3       8-9         -    10      - squashed
+   7   24 Sd F3 20(R0)                      4         5         -     -      - squashed
+   8   28 Ld F4 24(R0)                      4         6       7-8     9      - squashed
+   9   32 Addi R1 R0 7                      5       6-9         -    11      - squashed
+  10   16 Ld F2 16(R0)                     22        23     24-25    26     27 committed
+  11   20 Add.d F3 F2 F1                   22     27-28         -    29     30 committed
+  12   24 Sd F3 20(R0)                     23        24     31-32     -     32 committed
+  13   28 Ld F4 24(R0)                     23        25     26-27    28     33 committed
+  14   32 Addi R1 R0 7                     24     25-28         -    30     34 committed
+
+REGISTER VALUES
+R0=0  R1=7  R2=0  R3=0  R4=0  R5=0  R6=0  R7=0
+R8=0  R9=0  R10=4  R11=8  R12=16  R13=0  R14=0  R15=0
+R16=0  R17=0  R18=0  R19=0  R20=0  R21=0  R22=0  R23=0
+R24=0  R25=0  R26=0  R27=0  R28=0  R29=0  R30=0  R31=0
+F0=0  F1=9  F2=9  F3=18  F4=3  F5=0  F6=0  F7=0
+F8=0  F9=0  F10=0  F11=0  F12=0  F13=0  F14=0  F15=0
+F16=0  F17=0  F18=0  F19=0  F20=0  F21=0  F22=0  F23=0
+F24=0  F25=0  F26=0  F27=0  F28=0  F29=0  F30=0  F31=0
+
+NON-ZERO MEMORY VALUES
+Address   Value
+     16   9
+     20   18
+     24   3
+
+STATISTICS
+issued: 14
+committed: 9
+squashed: 5
+branch_predictions: 0
+mispredictions: 0
+memory_replays: 1
+forwarded_loads: 0
+issue_stall_cycles: 0

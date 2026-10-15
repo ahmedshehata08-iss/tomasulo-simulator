@@ -1,0 +1,9 @@
+{
+  "python": "3.12.14",
+  "platform": "Linux",
+  "test_command": "python3 -m unittest discover -s tests -v",
+  "exit_code": 0,
+  "test_methods": 44,
+  "seeded_differential_configurations": 72,
+  "experiment_configurations": 28
+}

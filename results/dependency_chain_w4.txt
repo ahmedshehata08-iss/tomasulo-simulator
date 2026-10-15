@@ -1,0 +1,42 @@
+TOMASULO SIMULATION | issue width 4
+Total cycles: 36
+
+  ID   PC INSTRUCTION                   ISSUE        EX       MEM    WB COMMIT STATUS
+   1    0 Add R3 R1 R2                      1       2-3         -     4      5 committed
+   2    4 Addi R1 R3 1                      1       5-6         -     7      8 committed
+   3    8 Sub R4 R1 R2                      1       8-9         -    10     11 committed
+   4   12 Add R3 R4 R1                      1     11-12         -    13     14 committed
+   5   16 Addi R5 R3 -2                     2     14-15         -    16     17 committed
+   6   20 Add R6 R5 R4                      2     17-18         -    19     20 committed
+   7   24 Add.d F3 F1 F2                    2       3-5         -     6     21 committed
+   8   28 Mult.d F4 F3 F2                   2      7-12         -    14     22 committed
+   9   32 Add.d F1 F4 F3                    3     15-17         -    18     23 committed
+  10   36 Sub.d F3 F1 F2                    3     19-21         -    22     24 committed
+  11   40 Mult.d F5 F3 F1                   3     23-28         -    29     30 committed
+  12   44 Add.d F6 F5 F4                    3     30-32         -    33     34 committed
+  13   48 Addi R3 R6 1                      4     20-21         -    23     35 committed
+  14   52 Add R7 R3 R1                      6     24-25         -    26     36 committed
+
+REGISTER VALUES
+R0=0  R1=9  R2=3  R3=20  R4=6  R5=13  R6=19  R7=29
+R8=0  R9=0  R10=0  R11=0  R12=0  R13=0  R14=0  R15=0
+R16=0  R17=0  R18=0  R19=0  R20=0  R21=0  R22=0  R23=0
+R24=0  R25=0  R26=0  R27=0  R28=0  R29=0  R30=0  R31=0
+F0=0  F1=20  F2=3  F3=17  F4=15  F5=340  F6=355  F7=0
+F8=0  F9=0  F10=0  F11=0  F12=0  F13=0  F14=0  F15=0
+F16=0  F17=0  F18=0  F19=0  F20=0  F21=0  F22=0  F23=0
+F24=0  F25=0  F26=0  F27=0  F28=0  F29=0  F30=0  F31=0
+
+NON-ZERO MEMORY VALUES
+Address   Value
+(none)
+
+STATISTICS
+issued: 14
+committed: 14
+squashed: 0
+branch_predictions: 0
+mispredictions: 0
+memory_replays: 0
+forwarded_loads: 0
+issue_stall_cycles: 2

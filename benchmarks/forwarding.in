@@ -1,0 +1,21 @@
+# A long first instruction holds stores in the ROB while younger loads execute.
+# Two older stores target address zero: the load must use the younger store.
+# Expected F3=4, F4=7, F5=7, F6=11, F7=0, F10=12.
+# Final memory: Mem[0]=4, Mem[4]=7, Mem[8]=11.
+Integer adder   4   1       1
+FP adder        4   2       1
+FP multiplier   2   24      1
+Load/store unit 8   1   4   1
+ROB entries = 32
+R1=0, F1=3, F2=4
+Mem[0]=99, Mem[4]=10, Mem[8]=11
+
+Mult.d F10 F1 F2
+Sd F1 0(R1)
+Sd F2 0(R1)
+Ld F3 0(R1)
+Add.d F4 F3 F1
+Sd F4 4(R1)
+Ld F5 4(R1)
+Ld F6 8(R1)
+Ld F7 12(R1)

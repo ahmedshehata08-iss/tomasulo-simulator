@@ -1,0 +1,26 @@
+# Four ROB entries and very small RS banks force partial issue bundles and stalls.
+# Expected R4=3, R5=4, R6=5, R7=4.
+# Expected F3=6, F4=8, F5=1, F6=9, F7=9, F8=27, F9=29, F10=29.
+# Final memory: Mem[0]=1, Mem[4]=9, Mem[8]=29.
+Integer adder   1   2       1
+FP adder        1   3       1
+FP multiplier   1   8       1
+Load/store unit 2   1   3   1
+ROB entries = 4
+R1=0, R2=1, R3=2, F1=2, F2=3
+Mem[0]=1
+
+Mult.d F3 F1 F2
+Add.d F4 F3 F1
+Add R4 R2 R3
+Addi R5 R4 1
+Ld F5 0(R1)
+Add.d F6 F5 F4
+Sd F6 4(R1)
+Ld F7 4(R1)
+Mult.d F8 F7 F2
+Addi R6 R5 1
+Add.d F9 F8 F1
+Sd F9 8(R1)
+Ld F10 8(R1)
+Sub R7 R6 R2

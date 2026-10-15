@@ -1,0 +1,49 @@
+test_all_isa_operations_and_initialized_state (test_simulator.ArchitectureTests.test_all_isa_operations_and_initialized_state) ... ok
+test_default_issue_width_and_override (test_simulator.ArchitectureTests.test_default_issue_width_and_override) ... ok
+test_hardwired_r0_with_initialization_and_writes (test_simulator.ArchitectureTests.test_hardwired_r0_with_initialization_and_writes) ... ok
+test_integer_and_fp_registers_are_distinct (test_simulator.ArchitectureTests.test_integer_and_fp_registers_are_distinct) ... ok
+test_same_bundle_raw_war_and_waw (test_simulator.ArchitectureTests.test_same_bundle_raw_war_and_waw) ... ok
+test_serialization_contains_results (test_simulator.ArchitectureTests.test_serialization_contains_results) ... ok
+test_small_rob_and_rs_with_long_dependency_chain (test_simulator.ArchitectureTests.test_small_rob_and_rs_with_long_dependency_chain) ... ok
+test_cli_cycle_guard_reports_error (test_simulator.CommandLineTests.test_cli_cycle_guard_reports_error) ... ok
+test_cli_invalid_input_reports_error (test_simulator.CommandLineTests.test_cli_invalid_input_reports_error) ... ok
+test_cli_missing_file_reports_error (test_simulator.CommandLineTests.test_cli_missing_file_reports_error) ... ok
+test_cli_writes_text_and_json (test_simulator.CommandLineTests.test_cli_writes_text_and_json) ... ok
+test_seeded_bounded_branch_programs (test_simulator.DifferentialTests.test_seeded_bounded_branch_programs) ... ok
+test_seeded_random_straight_line_programs (test_simulator.DifferentialTests.test_seeded_random_straight_line_programs) ... ok
+test_architectural_invalid_addresses_raise_precise_fault (test_simulator.InputAndFailureTests.test_architectural_invalid_addresses_raise_precise_fault) ... ok
+test_architectural_invalid_taken_branch_raises_fault (test_simulator.InputAndFailureTests.test_architectural_invalid_taken_branch_raises_fault) ... ok
+test_case_insensitive_whitespace_comments_and_hex (test_simulator.InputAndFailureTests.test_case_insensitive_whitespace_comments_and_hex) ... ok
+test_empty_program (test_simulator.InputAndFailureTests.test_empty_program) ... ok
+test_invalid_hardware_configuration_rejected (test_simulator.InputAndFailureTests.test_invalid_hardware_configuration_rejected) ... ok
+test_invalid_initializers_rejected (test_simulator.InputAndFailureTests.test_invalid_initializers_rejected) ... ok
+test_malformed_instructions_rejected_with_line_number (test_simulator.InputAndFailureTests.test_malformed_instructions_rejected_with_line_number) ... ok
+test_maximum_cycle_guard_and_invalid_override (test_simulator.InputAndFailureTests.test_maximum_cycle_guard_and_invalid_override) ... ok
+test_addresses_zero_and_last_word (test_simulator.MemoryTests.test_addresses_zero_and_last_word) ... ok
+test_forward_from_youngest_matching_store (test_simulator.MemoryTests.test_forward_from_youngest_matching_store) ... ok
+test_matching_store_with_pending_data_delays_load (test_simulator.MemoryTests.test_matching_store_with_pending_data_delays_load) ... ok
+test_small_lsq_eventually_releases_completed_loads (test_simulator.MemoryTests.test_small_lsq_eventually_releases_completed_loads) ... ok
+test_unknown_store_address_load_violation_replays (test_simulator.MemoryTests.test_unknown_store_address_load_violation_replays) ... ok
+test_unknown_store_address_nonalias_has_no_replay (test_simulator.MemoryTests.test_unknown_store_address_nonalias_has_no_replay) ... ok
+test_branch_recovery_cost (test_simulator.SpeculationTests.test_branch_recovery_cost) ... ok
+test_loop_taken_then_not_taken (test_simulator.SpeculationTests.test_loop_taken_then_not_taken) ... ok
+test_nested_branches_and_btb_index_aliasing (test_simulator.SpeculationTests.test_nested_branches_and_btb_index_aliasing) ... ok
+test_recovery_restores_older_uncommitted_rename (test_simulator.SpeculationTests.test_recovery_restores_older_uncommitted_rename) ... ok
+test_taken_branch_squashes_wrong_register_and_store (test_simulator.SpeculationTests.test_taken_branch_squashes_wrong_register_and_store) ... ok
+test_wrong_path_invalid_branch_does_not_poison_btb (test_simulator.SpeculationTests.test_wrong_path_invalid_branch_does_not_poison_btb) ... ok
+test_wrong_path_invalid_load_and_store_are_squashed (test_simulator.SpeculationTests.test_wrong_path_invalid_load_and_store_are_squashed) ... ok
+test_dependent_execution_follows_broadcast (test_simulator.TimingTests.test_dependent_execution_follows_broadcast) ... ok
+test_fp_adder_is_pipelined (test_simulator.TimingTests.test_fp_adder_is_pipelined) ... ok
+test_fp_multiplier_is_pipelined (test_simulator.TimingTests.test_fp_multiplier_is_pipelined) ... ok
+test_fu_count_allows_parallel_integer_execution (test_simulator.TimingTests.test_fu_count_allows_parallel_integer_execution) ... ok
+test_in_order_issue_width_bound (test_simulator.TimingTests.test_in_order_issue_width_bound) ... ok
+test_integer_unit_is_not_pipelined (test_simulator.TimingTests.test_integer_unit_is_not_pipelined) ... ok
+test_memory_has_one_nonpipelined_port (test_simulator.TimingTests.test_memory_has_one_nonpipelined_port) ... ok
+test_multicycle_execution_is_inclusive (test_simulator.TimingTests.test_multicycle_execution_is_inclusive) ... ok
+test_rs_freed_at_execution_reusable_next_cycle (test_simulator.TimingTests.test_rs_freed_at_execution_reusable_next_cycle) ... ok
+test_simple_add_timing (test_simulator.TimingTests.test_simple_add_timing) ... ok
+
+----------------------------------------------------------------------
+Ran 44 tests in 0.345s
+
+OK
