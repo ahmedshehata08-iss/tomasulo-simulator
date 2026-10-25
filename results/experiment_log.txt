@@ -1,8 +1,0 @@
-corrected_starter      W1= 66 W2= 65 W3= 65 W4= 65  speedup W4=1.02x  PASS
-mixed_independent      W1= 47 W2= 48 W3= 47 W4= 47  speedup W4=1.00x  PASS
-dependency_chain       W1= 40 W2= 38 W3= 38 W4= 36  speedup W4=1.11x  PASS
-forwarding             W1= 44 W2= 44 W3= 44 W4= 44  speedup W4=1.00x  PASS
-branch_recovery        W1= 44 W2= 44 W3= 44 W4= 44  speedup W4=1.00x  PASS
-memory_replay          W1= 34 W2= 34 W3= 35 W4= 35  speedup W4=0.97x  PASS
-resource_pressure      W1= 42 W2= 42 W3= 42 W4= 42  speedup W4=1.00x  PASS
-28 configurations matched the independent sequential interpreter.

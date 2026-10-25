@@ -1,0 +1,54 @@
+Tomasulo simulator state model
+Assignment author: Ahmed Ahmed
+Starter design: Qing (May 2017)
+
+Config: validated issue/WB/commit widths, capacities, latencies, unit counts,
+        memory size, branch-prediction mode, dispatch order, and cycle limit.
+        Assignment experiments use WB=commit=mem_units=1 and memory_size=256.
+Instruction: immutable opcode, source text, destination, sources, immediate,
+             and resolved static branch target. Numeric offsets are words.
+Operand: value or unique producer tag, plus the cycle the value became ready.
+Entry: unique dynamic ID, static word PC, Instruction, Operand list, stage
+       timestamps, result/address, completion/readiness cycles, and forwarding
+       source. Also holds prediction/outcome, unresolved older-store IDs,
+       committed/squashed status, squash reason/date, and optional staged fault.
+
+registers: architectural R0..R31 and F0..F31; zero initially unless supplied;
+           only commit writes registers. R0 is immutable.
+FloatMemory: 256-byte bytearray, accessed as little-endian four-byte binary32
+             values. Integer starting byte addresses 0..252 are legal, including
+             unaligned values. Initialized/stored address views and all nonzero
+             aligned words are enumerated for output. Forwarding rounds to the
+             same binary32 format as memory stores.
+rat: architectural destination -> youngest surviving unretired writer's ID.
+rob: deque of live Entry records in dynamic issue order; retirement at head.
+stations: waiting arithmetic entries grouped by int, fp_add, and fp_mul.
+lsq: live pending loads/stores; loads release at MEM completion, stores at commit.
+arithmetic_active: executing integer and FP entries with fixed completion dates;
+                   integer units are unpipelined, FP units are pipelined.
+address_active: nonpipelined load/store address calculations.
+memory_active: nonpipelined RAM accesses or one-cycle forwarded loads.
+results: completed register-producing entries awaiting a CDB broadcast;
+         arbitration sorts by completion cycle, then dynamic ID.
+history: every dynamic Entry, including committed and squashed work, for trace.
+by_id: unique dynamic ID -> Entry for producer lookup; IDs are never reused.
+
+pc: next static word-index instruction selected for issue.
+predictor: static branch PC -> one-bit last outcome, initially not taken.
+btb: eight tagged direct-mapped entries, each holding branch PC and target;
+     index = word PC & 7. A taken prediction needs a matching tag.
+fetch_resume_cycle: recovery gate; detection at n permits issue at n+2.
+branch_pending: used only by the optional no-prediction comparison mode.
+branch_predictions: prediction event log including BTB hit/index and next PC.
+branch_mispredictions: resolution/recovery log including discarded IDs.
+memory_replays: unresolved-store alias recovery log including store/load IDs.
+
+Recovery removes a suffix from ROB, queues, active execution, and pending CDB
+results; marks corresponding history rows as squashed; clears discarded tags;
+reconstructs RAT from the surviving ROB; and redirects PC after one recovery
+cycle. Wrong-path registers and memory cannot commit. A replay starts at the
+earliest load affected by an older store whose address resolves to overlap.
+
+run() output: timing rows, full architectural registers, memory address views,
+committed/issued/squashed counts, committed IPC, configuration, and event logs.
+An interrupted EX/MEM interval retains its start but has no completed end.

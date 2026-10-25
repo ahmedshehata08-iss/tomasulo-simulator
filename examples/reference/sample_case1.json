@@ -1,0 +1,17 @@
+{
+  "rs_int": 4,
+  "rs_fp_add": 4,
+  "rs_fp_mul": 4,
+  "lsq_size": 4,
+  "rob_size": 64,
+  "int_latency": 1,
+  "fp_add_latency": 3,
+  "fp_mul_latency": 5,
+  "addr_latency": 1,
+  "mem_latency": 6,
+  "int_units": 1,
+  "fp_add_units": 1,
+  "fp_mul_units": 1,
+  "addr_units": 1,
+  "mem_units": 1
+}

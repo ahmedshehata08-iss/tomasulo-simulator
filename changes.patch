@@ -1,0 +1,3982 @@
+--- original/.gitignore
++++ Ahmed_Ahmed_Tomasulo/.gitignore
+@@ -0,0 +1,3 @@
++__pycache__/
++*.py[cod]
++.venv/
+--- original/README.md
++++ Ahmed_Ahmed_Tomasulo/README.md
+@@ -1,9 +1,133 @@
+-Tomasulo Algorithm Simulation
+-* includes instructions of int_add, fp_add, fp_multi, load, store, branch;
+-* implements ROB, RAT, load-store-queue;
+-* implements out-of-order processing and memory disambiguation; 
+-* doesn't include branch prediction.
++# Tomasulo Simulator
+ 
+-How to run:
+-cd code;
+-python main.py
++**Assignment author: Ahmed Ahmed**  
++Original starter: Qing (May 2017), preserved in `original/tomasulo-python/`.
++
++Repository: [ahmedshehata08-iss/tomasulo-simulator](https://github.com/ahmedshehata08-iss/tomasulo-simulator)  
++Report: [PDF](report/Ahmed_Ahmed_Tomasulo_Report.pdf) | [Editable DOCX](report/Ahmed_Ahmed_Tomasulo_Report.docx)
++
++This submission implements the supplied programming assignment: in-order issue at widths 1–4, out-of-order execution, register renaming, in-order commit, branch prediction and recovery, and speculative load disambiguation. The assignment profile has one CDB, one commit per cycle, one memory port, and 256-byte memory. The accompanying report follows the supplied report example and includes actual before-and-after source snapshots.
++
++## Run and reproduce
++
++Use Python 3.10 or newer. The simulator, experiments, and tests use only the Python standard library. Run these commands from this project's root:
++
++```bash
++python3 code/main.py
++python3 code/main.py --input examples/sample_case1.in --issue-width 4
++python3 code/main.py --input examples/sample_case2.in --issue-width 2 --json results/my_run.json --trace-csv results/my_run.csv
++python3 -m unittest discover -s tests -v
++python3 tests/stress_equivalence.py
++python3 run_experiments.py
++python3 audit/verify_assignment_timings.py
++```
++
++The default command reads `examples/assignment_demo.in`, resolved relative to the script. `python3 main.py` is an equivalent repository-root entry point. Explicit paths are relative to your working directory. `--max-cycles` sets a nontermination guard. `--json` writes complete timing/state/event data; `--trace-csv` writes all dynamic instruction rows, including squashed rows.
++
++`assignment_demo.in` is a terminating variation of the handout example: it sets R3=20 so that R2 equals R3. `handout_literal.in` preserves the handout's hardware, issue width 2, initial values, and instructions. Its R2=20 and default R3=0 never change, so its branch always returns to the beginning. This command is expected to exit with a cycle-limit error:
++
++```bash
++python3 code/main.py --input examples/handout_literal.in --max-cycles 200
++```
++
++## Single-file input
++
++Each current example combines hardware, initial registers, memory, and assembly in one case-insensitive text file:
++
++```text
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           2               1                          1
++FP adder                3               3                          1
++FP multiplier           2              20                          1
++Load/store unit         3               1               4          1
++ROB entries = 128
++Issue width = 2
++R1=10, R2=20, R3=20, F2=30.1
++Mem[4]=1, Mem[8]=2, Mem[12]=3.4
++Add.d F1, F2, F3
++Ld F4, 8(R1)
++Bne R2, R3, -3
++```
++
++The load/store row's number of FUs sets the number of address units; memory still has one port. Unspecified registers and memory bytes start at zero. R0 remains zero; F0 is an ordinary writable register. Comments start with `#` or `;`. Labels, commas, and whitespace are accepted.
++
++Supported instructions are `Add`, `Addi`, `Sub`, `Add.d`, `Sub.d`, `Mult.d` (also `Mul.d`), `Ld`, `Sd`, `Bne`, and `Beq`. Arithmetic register banks are checked. Load/store data uses F registers; addresses and branch operands use R registers.
++
++Numeric branch displacements are **words relative to the next instruction**: `target_index = current_index + 1 + offset`. Equivalently, byte PC advances by `4 + (offset << 2)`. A label may replace the numeric offset, including an exit label immediately after the final instruction.
++
++## Hardware and model settings
++
++CLI issue-width, execution-order, and cycle-limit arguments override input settings. Direct configuration assignments such as `max_cycles = 200` are also accepted. Legacy assembly-only `--program` with optional JSON `--config` remains available, but the combined `--input` format is the assignment interface.
++
++| Setting | Default | Meaning |
++|---|---:|---|
++| `issue_width` | 1 | Maximum contiguous in-order issues per cycle; range 1–4 |
++| `writeback_width` / `commit_width` | 1 / 1 | CDB broadcasts and in-order retirements per cycle |
++| `rs_int` / `rs_fp_add` / `rs_fp_mul` | 4 / 3 / 2 | Waiting arithmetic reservation stations |
++| `lsq_size` / `rob_size` | 5 / 64 | Load/store queue and reorder buffer capacity |
++| `int_latency` / `fp_add_latency` / `fp_mul_latency` | 1 / 4 / 15 | Arithmetic execution cycles |
++| `addr_latency` / `mem_latency` | 1 / 5 | Address calculation and memory access cycles |
++| `int_units` / `fp_add_units` / `fp_mul_units` | 1 / 1 / 1 | Arithmetic functional-unit counts |
++| `addr_units` / `mem_units` | 1 / 1 | Address units and memory ports |
++| `memory_size` | 256 | Byte-addressed memory capacity |
++| `branch_prediction` | true | One-bit prediction with the eight-entry BTB |
++| `execution_order` | out_of_order | Oldest-ready dispatch; optional `in_order` comparison mode |
++| `max_cycles` | 100000 | Nontermination guard |
++
++The simulator retains optional wider WB/commit and memory configurations for comparison. The submitted measurements keep WB=1, commit=1, memory ports=1, memory size=256, and prediction enabled at every issue width. Unknown configuration names and invalid values are rejected.
++
++## Timing, prediction, and memory rules
++
++- Each cycle visits commit, write-back, memory, execute, and issue in that order. EX cannot start in its issue cycle; WB follows completion; a broadcast cannot feed EX or commit until the next cycle. Intervals include both endpoints: `end = start + latency - 1`.
++- Integer units, address units, and memory ports are unpipelined. FP adders and multipliers are pipelined, accepting one operation per unit per cycle. Waiting arithmetic RS entries release when EX starts. Loads release their LSQ entry after MEM completion; stores retain it until commit.
++- Issue stops at the first full required resource or full ROB. Execution selects the oldest ready candidates for available units. Two available multiplier pipelines can start two ready multiplies in the same cycle. CDB arbitration chooses earliest completion, then oldest dynamic ID.
++- Sources are captured before a destination is renamed. Unique dynamic IDs serve as producer tags. WB wakes matching consumers, while only commit changes architectural registers. Commit clears a RAT mapping only when the retiring producer still owns it.
++- Branches predict during ISSUE using one-bit history initially predicting not taken and a tagged eight-entry direct-mapped BTB indexed by the low three bits of word PC. They resolve at EX completion. A misprediction squashes younger work, reconstructs the RAT from the surviving ROB, and redirects fetch. Detection in cycle n reserves n+1 for recovery; correct-path issue resumes in n+2.
++- Loads may pass stores whose addresses are unresolved. They remember those older stores; a later overlapping address causes replay from the earliest affected load. Squashed work cannot commit. The same one-cycle recovery convention is used for replay.
++- The youngest known older store with an identical address can forward ready data in one cycle. Known partial overlaps wait for stores to commit so the load observes correct bytes. Forwarding occupies the memory port. Other accesses take `mem_latency` cycles. Stores start MEM only at the ROB head and change memory at commit.
++- Memory is an actual byte array. Each load/store accesses four little-endian IEEE binary32 bytes. Legal starting byte addresses are 0 through 252, including unaligned addresses such as 18 in the handout. Overlapping accesses share the same bytes. Output includes nonzero aligned words and explicitly initialized/stored address views.
++- Stores and branches have no register-result WB stage. They can commit after their completed MEM or EX stage respectively. Invalid speculative addresses are recorded and raised only if that instruction reaches commit; wrong-path faults disappear on squash.
++
++Timing IDs are dynamic IDs; PC is a zero-based static instruction index. IPC is committed instructions divided by total cycles. JSON distinguishes committed, issued, and squashed counts, and records branch predictions, mispredictions, and memory replays. An interrupted EX or MEM interval has a start but no completed end.
++
++## Measured results
++
++Only issue width changes within each row below. The CDB, commit width, and memory port count stay at one.
++
++| Program | Committed | W1 cycles | W2 cycles | W3 cycles | W4 cycles |
++|---|---:|---:|---:|---:|---:|
++| Sample case 1 | 17 | 36 | 36 | 36 | 36 |
++| Sample case 2, one memory port | 17 | 47 | 46 | 46 | 46 |
++| Starter branch, -3 words | 15 | 45 | 45 | 45 | 45 |
++| Additional full loop, -8 words | 25 | 67 | 66 | 66 | 66 |
++| Independent integer operations | 24 | 27 | 27 | 27 | 27 |
++| Terminating handout variation | 3 | 10 | 9 | 9 | 9 |
++| Branch recovery | 13 | 28 | 25 | 25 | 25 |
++| Memory-order replay | 5 | 19 | 19 | 19 | 19 |
++| Unpipelined integer unit | 3 | 12 | 12 | 12 | 12 |
++
++`run_experiments.py` reproduces all 36 terminating runs and four bounded checks of the literal nonterminating input. Its separate sequential interpreter decodes the benchmark assembly, models byte memory with `struct`, and compares all 64 registers, memory values, and committed instruction counts. Every check passes. The regression suite has 67 passing test methods, including 80 seeded equivalence runs; the separate stress script passes another 400 runs (100 programs at four issue widths).
++
++The sample report is a formatting and program reference. Its case 2 uses two memory units; this submission keeps its two address units, two FP adders, and two multipliers but adapts it to the assignment's single memory port. The total-cycle coincidence of 47 at W1 does not imply identical intermediate timings. Instructions 2 and 4 both execute in cycles 9–23, then use the single CDB in cycles 24 and 25. Case 1's single pipelined multiplier starts those instructions in consecutive cycles 10 and 11.
++
++The starter's old -12-byte branch displacement becomes -3 words and still targets PC5 from PC7, repeating only the pointer updates and branch. `full_loop.in` is a separate additional test using -8 words to target PC0. Their committed counts are 15 and 25 respectively. The branch recovery test has outcomes taken, taken, not taken and two mispredictions; the replay test detects one stale load and finishes with F2=7, F4=14, and Mem[16]=7 at every issue width.
++
++The fixed backend explains the limited benefit of wider issue: 24 independent integer operations still need 27 cycles even with four integer units, because the CDB and commit remain one per cycle. Wider issue can expose work earlier, but it cannot remove those bottlenecks.
++
++## Files and attribution
++
++- `code/`: implemented simulator, credited to Ahmed Ahmed with Qing's starter attribution retained.
++- `examples/`: current combined inputs; `examples/reference/` contains marked historical inputs.
++- `tests/`: regression tests and independent stress interpreter.
++- `results/`: reproducible text/JSON traces and CSV/JSON experiment summaries.
++- `audit/`: independent checker and verified results for all eight main timing tables.
++- `report/`: the PDF report and editable DOCX, both authored by Ahmed Ahmed.
++- `original/tomasulo-python/`: unchanged supplied starter for before/after comparison.
++- `changes.patch`: implementation changes relative to the supplied starter.
++- `data_structure.txt`: revised state-model description.
++
++The latest report is included in `report/`; `REPORT.pdf` is an identical convenience copy at the repository root. Source snapshots show exact original and submitted code. The repository contains the corresponding implementation, input files, tests, and measured results. Earlier implementations remain available in Git history.
++
++## Model boundaries
++
++FP registers and arithmetic use Python binary64 floats; memory stores and forwarded store values round to binary32. Despite the instruction spelling `Mult.d`, its register result remains a float as requested by the handout. This educational model does not emulate hardware IEEE exception flags or NaN payloads, caches, TLBs, interrupts, or fixed-width integer overflow. The conservative handling of known partial-overlap stores is a documented implementation choice. Wider backend options and no-prediction/in-order modes are extensions and are not used for the assignment results above.
+--- original/audit/verify_assignment_timings.py
++++ Ahmed_Ahmed_Tomasulo/audit/verify_assignment_timings.py
+@@ -0,0 +1,167 @@
++"""Independently audit assignment-profile sample timing JSON; Author: Ahmed Ahmed.
++
++No simulator modules are imported. Each row is parsed from assembly text, then
++an independent per-cycle constraints check reconstructs greedy ISSUE/EX/MEM/WB/
++COMMIT selections. Scope: the two branch-free, load-only sample programs.
++
++Run from any directory: python verify_assignment_timings.py [results_directory]
++"""
++from collections import Counter
++import hashlib
++import json
++from pathlib import Path
++import re
++import sys
++
++
++def check(condition, message):
++    if not condition:
++        raise AssertionError(message)
++
++
++def parse_rows(data):
++    rows, writers = [], {}
++    for trace in data['instructions']:
++        words = trace['text'].replace(',', ' ').split()
++        op, destination = words[:2]
++        if op == 'Ld':
++            kind = 'memory'
++            match = re.fullmatch(r'[+-]?\d+\((R\d+)\)', ''.join(words[2:]))
++            check(match is not None, 'Malformed sample load address')
++            sources = [match[1]]
++        else:
++            check(op in ('Add', 'Addi', 'Sub', 'Add.d', 'Sub.d', 'Mult.d'),
++                  f'Unsupported operation in branch-free audit: {op}')
++            kind = 'fp_mul' if op == 'Mult.d' else 'fp_add' if '.d' in op else 'int'
++            sources = words[2:3] if op == 'Addi' else words[2:4]
++        row = dict(trace)
++        row['kind'] = kind
++        row['dependencies'] = [writers[name] for name in sources if name != 'R0' and name in writers]
++        row['completion'] = row['mem_end'] if kind == 'memory' else row['exe_end']
++        check(not row.get('squashed', False) and row.get('status', 'committed') == 'committed',
++              'Sample table must contain committed rows only')
++        rows.append(row)
++        if destination != 'R0':
++            writers[destination] = row
++    return rows
++
++
++def verify(path):
++    data = json.loads(path.read_text())
++    config = data['config']
++    width = config['issue_width']
++    rows = parse_rows(data)
++    context = path.name
++    check(len(rows) == 17, f'{context}: expected 17 rows')
++    check([row['id'] for row in rows] == list(range(1, 18)), f'{context}: dynamic IDs')
++    check([row['pc'] for row in rows] == list(range(17)), f'{context}: instruction order')
++    check(config['writeback_width'] == config['commit_width'] == config['mem_units'] == 1,
++          f'{context}: assignment requires one CDB, commit width one and one memory port')
++    check(config['execution_order'] == 'out_of_order', f'{context}: scheduler profile')
++    capacity = {'int': config['rs_int'], 'fp_add': config['rs_fp_add'],
++                'fp_mul': config['rs_fp_mul'], 'memory': config['lsq_size']}
++    units = {'int': config['int_units'], 'fp_add': config['fp_add_units'],
++             'fp_mul': config['fp_mul_units'], 'memory': config['addr_units']}
++    latency = {'int': config['int_latency'], 'fp_add': config['fp_add_latency'],
++               'fp_mul': config['fp_mul_latency'], 'memory': config['addr_latency']}
++    for row in rows:
++        prefix = f'{context}, instruction {row["id"]}'
++        check(row['exe_start'] > row['issue'], prefix + ': ISSUE must precede EX')
++        check(row['exe_end'] - row['exe_start'] + 1 == latency[row['kind']],
++              prefix + ': incorrect EX duration')
++        check(all(dep['wb'] < row['exe_start'] for dep in row['dependencies']),
++              prefix + ': dependent EX must start after producer WB')
++        if row['kind'] == 'memory':
++            check(row['mem_start'] > row['exe_end'], prefix + ': EX must precede MEM')
++            check(row['mem_end'] - row['mem_start'] + 1 == config['mem_latency'],
++                  prefix + ': incorrect memory duration')
++            check(row['forwarded_from'] is None, prefix + ': no stores exist in this sample')
++        else:
++            check(row['mem_start'] is None and row['mem_end'] is None,
++                  prefix + ': arithmetic cannot use MEM')
++        check(row['wb'] > row['completion'], prefix + ': WB must follow completion')
++        check(row['commit'] > row['wb'], prefix + ': commit must follow WB')
++    check(data['cycles'] == max(row['commit'] for row in rows), context + ': total cycles')
++    check(data['instruction_count'] == 17, context + ': committed instruction count')
++    for cycle in range(1, data['cycles'] + 1):
++        prefix = f'{context}, cycle {cycle}'
++        # COMMIT precedes all other stages and retires the oldest ready ROB head.
++        pending = [row for row in rows if row['commit'] >= cycle]
++        expected = [pending[0]['id']] if pending and pending[0]['wb'] < cycle else []
++        actual = [row['id'] for row in rows if row['commit'] == cycle]
++        check(actual == expected, prefix + f': COMMIT {actual} != {expected}')
++        # One CDB, arbitrated by completion cycle then dynamic age.
++        eligible = sorted((row for row in rows if row['completion'] < cycle <= row['wb']),
++                          key=lambda row: (row['completion'], row['id']))
++        expected = [row['id'] for row in eligible[:1]]
++        actual = [row['id'] for row in rows if row['wb'] == cycle]
++        check(actual == expected, prefix + f': WB {actual} != {expected}')
++        # The memory port stays occupied through its last cycle, then is reusable.
++        occupied = sum(row['kind'] == 'memory' and row['mem_start'] < cycle <= row['mem_end']
++                       for row in rows)
++        check(occupied <= 1, prefix + ': overlapping memory accesses')
++        expected = [row['id'] for row in rows if row['kind'] == 'memory'
++                    and row['exe_end'] < cycle <= row['mem_start']][:1 - occupied]
++        actual = [row['id'] for row in rows if row['mem_start'] == cycle]
++        check(actual == expected, prefix + f': MEM {actual} != {expected}')
++        # Integer/address units are unpipelined; FP units have initiation interval one.
++        slots = dict(units)
++        for kind in ('int', 'memory'):
++            slots[kind] -= sum(row['kind'] == kind and row['exe_start'] < cycle <= row['exe_end']
++                               for row in rows)
++            check(slots[kind] >= 0, prefix + f': overlapping unpipelined {kind} unit')
++        expected = []
++        for row in rows:
++            if row['issue'] >= cycle or row['exe_start'] < cycle:
++                continue
++            if any(dep['wb'] >= cycle for dep in row['dependencies']):
++                continue
++            if slots[row['kind']] > 0:
++                expected.append(row['id'])
++                slots[row['kind']] -= 1
++        actual = [row['id'] for row in rows if row['exe_start'] == cycle]
++        check(actual == expected, prefix + f': EX {actual} != {expected}')
++        # ISSUE sees resources freed by this cycle's earlier stages.
++        rob = sum(row['issue'] < cycle < row['commit'] for row in rows)
++        rs = Counter(row['kind'] for row in rows
++                     if row['kind'] != 'memory' and row['issue'] < cycle < row['exe_start'])
++        rs['memory'] = sum(row['kind'] == 'memory' and row['issue'] < cycle < row['mem_end']
++                           for row in rows)
++        expected = []
++        for row in rows:
++            if row['issue'] < cycle:
++                continue
++            if rob >= config['rob_size'] or rs[row['kind']] >= capacity[row['kind']]:
++                break
++            expected.append(row['id'])
++            rob += 1
++            rs[row['kind']] += 1
++            if len(expected) == width:
++                break
++        actual = [row['id'] for row in rows if row['issue'] == cycle]
++        check(actual == expected, prefix + f': ISSUE {actual} != {expected}')
++    return {'file': path.name, 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
++            'issue_width': width, 'cycles': data['cycles'], 'rows_checked': len(rows), 'status': 'PASS'}
++
++
++def main():
++    here = Path(__file__).resolve().parent
++    if len(sys.argv) > 1:
++        results = Path(sys.argv[1])
++    else:
++        candidates = (here.parent / 'results', here.parent / 'solution' / 'results')
++        results = next((path for path in candidates if path.is_dir()), candidates[0])
++    paths = [results / f'experiment_sample_case{case}_assignment_w{width}.json'
++             for case in (1, 2) for width in range(1, 5)]
++    findings = [verify(path) for path in paths]
++    summary = {'author': 'Ahmed Ahmed', 'tables_checked': len(findings),
++               'rows_checked': sum(item['rows_checked'] for item in findings),
++               'method': 'Independent per-cycle constraints and greedy selections; no simulator imports',
++               'status': 'PASS', 'findings': findings}
++    output = here / 'assignment_timing_audit.json'
++    output.write_text(json.dumps(summary, indent=2) + '\n')
++    print(json.dumps(summary, indent=2))
++
++
++if __name__ == '__main__':
++    main()
+--- original/code/code.in
++++ Ahmed_Ahmed_Tomasulo/code/code.in
+@@ -1,9 +1,18 @@
+-Ld F2 0(R1)
+-Mult.d F4 F2 F20
+-Ld F6 0(R2)
+-Add.d F6 F4 F6
+-Sd F6 0(R2)
+-Addi R1 R1 -4
+-Addi R2 R2 -4
+-Bne R1 R0 -12
+-Add.d F20 F2 F2
++# Terminating variation of handout example. Only R3 initialization is changed to 20.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           2               1                          1
++FP adder                3               3                          1
++FP multiplier           2              20                          1
++Load/store unit         3               1               4          1
++
++ROB entries = 128
++Issue width = 2
++R1=10, R2=20, R3=20, F2=30.1
++Mem[4]=1, Mem[8]=2, Mem[12]=3.4
++
++Add.d F1, F2, F3
++Ld F4, 8(R1)
++Bne R2, R3, -3
+--- original/code/commit.py
++++ Ahmed_Ahmed_Tomasulo/code/commit.py
+@@ -1,49 +1,27 @@
+-# Qing 
+-# 29th may 2017
+-'''
+-1. commit ROB_buffer
+-2. fetch header into ROB_buffer
+-'''
++"""In-order retirement with precise register and memory updates.
++Starter: Qing (May 2017). Assignment modifications: Ahmed Ahmed.
++"""
+ 
+-# function: print ROB entry 
+-def print_ROB(entry, instructions):
+-    item = instructions[entry.PC].ljust(30)
+-    item += str(entry.issue).ljust(15) 
+-    item += str(entry.exe).ljust(15) 
+-    item += str(entry.mem).ljust(15)
+-    item += str(entry.cdb).ljust(15)
+-    item += str(entry.commit)
+-    print(item)
+-# function: modify architectual reg
+-def modify_arch_reg(entry, reg_int, reg_fp):
+-    if entry.dest_tag[0] == 'F':
+-        reg_fp[int(entry.dest_tag[1:])] = entry.value
+-    elif entry.dest_tag[0] == 'R':
+-        reg_int[int(entry.dest_tag[1:])] = entry.value
+-    else:
+-        pass
+ 
+-# function: commit
+-def commit(ROB, reg_int, reg_fp, cycle, instructions):
+-    if len(ROB)>0:
+-        if instructions[ROB[0].PC].split(' ')[0]=='Bne':
+-            if len(ROB[0].exe)!=0:
+-                entry = ROB.popleft()
+-                print_ROB(entry, instructions)
+-        if (len(ROB)>0)&(instructions[ROB[0].PC].split(' ')[0]!='Bne'):
+-            if len(ROB[0].cdb)!=0: # broadcasted instructions
+-                ROB[0].commit.append(cycle+1)
+-                entry = ROB.popleft()
+-                modify_arch_reg(entry, reg_int, reg_fp)
+-                print_ROB(entry, instructions)
+-            elif len(ROB[0].commit)!=0: # Sd
+-                entry = ROB.popleft()
+-                print_ROB(entry, instructions)
+-                if len(ROB)>0:
+-                    if len(ROB[0].cdb)!=0: # broadcasted instructions
+-                        ROB[0].commit.append(cycle+1)
+-                        entry = ROB.popleft()
+-                        modify_arch_reg(entry, reg_int, reg_fp)
+-                        print_ROB(entry, instructions)
+-            else:
+-                pass
++def commit(sim):
++    for _ in range(sim.config.commit_width):
++        if not sim.rob:
++            break
++        entry = sim.rob[0]
++        if entry.ready_cycle is None or entry.ready_cycle >= sim.cycle:
++            break
++        if getattr(entry, "fault", None):
++            raise ValueError(f"Instruction {entry.id}: {entry.fault}")
++        ins = entry.instruction
++        if ins.op == "Sd":
++            sim.memory[entry.address] = entry.result
++            sim.lsq.remove(entry)
++        elif ins.dest is not None and ins.dest != "R0":
++            value = int(entry.result) if ins.dest.startswith("R") else float(entry.result)
++            sim.registers[ins.dest] = value
++            if sim.rat.get(ins.dest) == entry.id:
++                del sim.rat[ins.dest]
++        entry.commit = sim.cycle
++        entry.status = "committed"
++        sim.rob.popleft()
++        sim.registers["R0"] = 0
+--- original/code/exe.py
++++ Ahmed_Ahmed_Tomasulo/code/exe.py
+@@ -1,167 +1,75 @@
+-# Qing 
+-# 24th May 2017
++"""Oldest-ready execution with fixed completion cycles.
++Starter: Qing (May 2017). Assignment modifications: Ahmed Ahmed.
++"""
+ 
+-''' 
+-1. calculate valid instructions
+-    -- for ALU instructions, write results into fu_results, remove that fu entry  
+-    -- for LD/SD, write address result immediately back to ld_sd_queue
+-2. fetch instructions into function unit with spare space
+-    -- remove ALU instructions from rs
+-    -- don't remove ld/sd instructions
+-'''
+-from init import fu_entry, fu_result
+ 
+-# function: check rs and return valid instruction index
+-def check_valid_ins_in_rs(rs):
+-    index = -1
+-    if len(rs)!=0:
+-        for i in range(len(rs)):
+-            if (rs[i].valid_1st==1)&(rs[i].valid_2nd==1)&(rs[i].busy==1):
+-                index = i
++def _start(sim, entry):
++    ins = entry.instruction
++    entry.status = "executing"
++    entry.exe_start = sim.cycle
++    latency = sim.latencies[ins.kind]
++    entry.exe_end = sim.cycle + latency - 1
++    if ins.kind == "memory":
++        # A store can compute its address while its data is still pending.
++        entry.address = int(entry.operands[0].value) + ins.immediate
++        if not 0 <= entry.address <= sim.config.memory_size - 4:
++            # Wrong-path faults are discarded with their instruction, not raised early.
++            entry.fault = f"memory address {entry.address} is outside 0..{sim.config.memory_size - 4}"
++        sim.address_active.append(entry)
++    else:
++        left, right = (operand.value for operand in entry.operands)
++        if ins.op in ("Add", "Addi", "Add.d"):
++            entry.result = left + right
++        elif ins.op in ("Sub", "Sub.d"):
++            entry.result = left - right
++        elif ins.op == "Mult.d":
++            entry.result = left * right
++        elif ins.op == "Bne":
++            entry.result = int(left != right)
++        elif ins.op == "Beq":
++            entry.result = int(left == right)
++        sim.stations[ins.kind].remove(entry)
++        sim.arithmetic_active.append(entry)
++
++
++def exe(sim):
++    # FP pipelines accept one operation per unit per cycle; integer units do not.
++    slots = dict(sim.unit_counts)
++    slots["int"] -= sum(entry.instruction.kind == "int" for entry in sim.arithmetic_active)
++    slots["memory"] = sim.config.addr_units - len(sim.address_active)
++    waiting = sorted(
++        [e for station in sim.stations.values() for e in station]
++        + [e for e in sim.lsq if e.exe_start is None], key=lambda e: e.id
++    )
++    for entry in waiting:
++        ins = entry.instruction
++        needed = entry.operands[:1] if ins.kind == "memory" else entry.operands
++        ready = entry.issue < sim.cycle and all(x.ready(sim.cycle) for x in needed)
++        if not ready or slots[ins.kind] <= 0:
++            if sim.config.execution_order == "in_order":
+                 break
+-    return index
+-
+-# function: check ld_sd_queue and return valid instruction index
+-def check_valid_ins_in_ldsd(ldsd):
+-    index = -1
+-    if len(ldsd)!=0:
+-        for i in range(len(ldsd)):
+-            if (ldsd[i].valid==1) & (ldsd[i].ready==0):
+-                index = i
+-                break
+-    return index
+-
+-# function: add entry into fu 
+-def add_entry_into_fu(fu, ins_in_rs):
+-    fu[-1].cycle = 0
+-    fu[-1].op = ins_in_rs.op
+-    fu[-1].value1 = ins_in_rs.value_1st
+-    fu[-1].value2 = ins_in_rs.value_2nd
+-    fu[-1].dest_tag = ins_in_rs.dest_tag
+-
+-# function: find ROB entry by tag
+-def find_ROB_entry(ROB, tag):
+-    for index in range(len(ROB)):
+-        if ROB[index].ROB_tag == tag:
+-            break
+-    return index
+-
+-# function: functional units execution 
+-def fu_exe(fu, fu_results, ROB, time_fu, cycle, PC):
+-    if len(fu)!=0:
+-        for element in fu:
+-            element.cycle += 1
+-        # write starting cycle 
+-        if fu[-1].cycle == 1:
+-            index = find_ROB_entry(ROB, fu[-1].dest_tag)
+-            ROB[index].exe.append(cycle)
+-        # finish cycle
+-        if fu[0].cycle == time_fu:
+-            index = find_ROB_entry(ROB, fu[0].dest_tag)
+-            ROB[index].exe.append(cycle)
+-            # calculation result
+-            fu_results.append(fu_result())
+-            fu_results[-1].dest_tag = fu[0].dest_tag
+-            if (fu[0].op=='Add')|(fu[0].op=='Add.d')|(fu[0].op=='Addi'):
+-                fu_results[-1].value = fu[0].value1 + fu[0].value2
+-            elif (fu[0].op=='Sub')|(fu[0].op=='Sub.d'):
+-                fu_results[-1].value = fu[0].value1 - fu[0].value2
+-            elif (fu[0].op=='Mult.d'):
+-                fu_results[-1].value = fu[0].value1 * fu[0].value2
+-            elif (fu[0].op=='Bne'):
+-                fu_results.pop()
+-                if fu[0].value1 == fu[0].value2:
+-                    PC.PC += 1
+-                    PC.valid = 1
+-                else:
+-                    index = find_ROB_entry(ROB, fu[0].dest_tag)
+-                    offset = ROB[index].dest_tag
+-                    PC.PC = int(PC.PC + 1 + offset/4)
+-                    PC.valid = 1
++            continue
++        _start(sim, entry)
++        slots[ins.kind] -= 1
++    # Resolve oldest completions first, so recovery can cancel a younger event.
++    completed = sorted((entry for entry in sim.arithmetic_active + sim.address_active
++                        if entry.exe_end == sim.cycle), key=lambda entry: entry.id)
++    for entry in completed:
++        if entry.squashed:
++            continue
++        if entry.instruction.kind == "memory":
++            sim.address_active.remove(entry)
++            entry.status = "address_ready"
++            if getattr(entry, "fault", None):
++                entry.ready_cycle = sim.cycle
++            elif entry.instruction.op == "Sd":
++                sim.validate_store_address(entry)
++        else:
++            sim.arithmetic_active.remove(entry)
++            entry.complete_cycle = sim.cycle
++            entry.status = "executed"
++            if entry.instruction.branch:
++                entry.ready_cycle = sim.cycle
++                sim.resolve_branch(entry)
+             else:
+-                pass
+-            # remove from fu 
+-            fu.popleft()
+-
+-# function: ld_sd_execution 
+-def ld_sd_execution(ld_sd_exe, time_ld_sd_exe, ld_sd_queue, ROB, cycle):
+-    if ld_sd_exe.busy == 1:
+-        # write down starting cycle
+-        if ld_sd_exe.cycle == 0:            
+-            for element in ld_sd_queue:
+-                if element.ld_sd_tag == ld_sd_exe.dest_tag:
+-                    break
+-            index = find_ROB_entry(ROB, element.dest_tag)
+-            ROB[index].exe.append(cycle)
+-            # execute 
+-            ld_sd_exe.cycle += 1
+-        # write address back to ld_sd_queue
+-        if ld_sd_exe.cycle == time_ld_sd_exe:
+-            address = ld_sd_exe.value1 + ld_sd_exe.value2
+-            for element in ld_sd_queue:
+-                if element.ld_sd_tag == ld_sd_exe.dest_tag:
+-                    element.address = address
+-                    element.ready = 1
+-                    break
+-            # write down finish cycle
+-            index = find_ROB_entry(ROB, element.dest_tag)
+-            ROB[index].exe.append(cycle)
+-            ld_sd_exe.busy = 0
+-
+-# function: execution
+-def exe(fu_int_adder, time_fu_int_adder,
+-        fu_fp_adder, time_fu_fp_adder,
+-        fu_fp_multi, time_fu_fp_multi, results_buffer,
+-        rs_int_adder, rs_fp_adder, rs_fp_multi, 
+-        ld_sd_exe, time_ld_sd_exe, ld_sd_queue,
+-        cycle, ROB, PC):
+-    '''execution in fu and ld_sd address calculation'''
+-    ld_sd_execution(ld_sd_exe, time_ld_sd_exe, ld_sd_queue, ROB, cycle) 
+-    # functional units 
+-    fu_exe(fu_int_adder, results_buffer, ROB, time_fu_int_adder, cycle, PC)
+-    fu_exe(fu_fp_adder, results_buffer, ROB, time_fu_fp_adder, cycle, PC)
+-    fu_exe(fu_fp_multi, results_buffer, ROB, time_fu_fp_multi, cycle, PC)
+-    '''fetch instructions from rs and ld_sd_queue'''
+-    # from ld_sd_queue
+-    # check valid ins in ld_sd_queue 
+-    index = check_valid_ins_in_ldsd(ld_sd_queue)
+-    # put ins into ld_sd_exe
+-    if (index>=0)&(ld_sd_exe.busy==0):
+-        ld_sd_exe.busy = 1
+-        ld_sd_exe.cycle = 0
+-        ld_sd_exe.value1 = ld_sd_queue[index].reg_value
+-        ld_sd_exe.value2 = ld_sd_queue[index].immediate
+-        ld_sd_exe.dest_tag = ld_sd_queue[index].ld_sd_tag
+-        if ROB[find_ROB_entry(ROB, ld_sd_queue[index].dest_tag)].issue[0] < cycle:
+-            ld_sd_execution(ld_sd_exe, time_ld_sd_exe, ld_sd_queue, ROB, cycle)
+-    # from rs 
+-    # int_adder
+-    # fetch valid instruction 
+-    if check_valid_ins_in_rs(rs_int_adder)>=0:
+-        index = check_valid_ins_in_rs(rs_int_adder)
+-        fu_int_adder.append(fu_entry())
+-        add_entry_into_fu(fu_int_adder, rs_int_adder[index])
+-        # check if it's a waiting instruction
+-        if ROB[find_ROB_entry(ROB, rs_int_adder[index].dest_tag)].issue[0] < cycle:
+-            fu_exe(fu_int_adder, results_buffer, ROB, time_fu_int_adder, cycle, PC)
+-        # remove ins from rs 
+-        rs_int_adder[index].busy = 0
+-    # fp_adder
+-    if check_valid_ins_in_rs(rs_fp_adder)>=0:
+-        index = check_valid_ins_in_rs(rs_fp_adder)
+-        fu_fp_adder.append(fu_entry())
+-        add_entry_into_fu(fu_fp_adder, rs_fp_adder[index])
+-        if ROB[find_ROB_entry(ROB, rs_fp_adder[index].dest_tag)].issue[0] < cycle:
+-            fu_exe(fu_fp_adder, results_buffer, ROB, time_fu_fp_adder, cycle, PC)
+-        # remove ins from rs 
+-        rs_fp_adder[index].busy = 0
+-    # fp_multi
+-    if check_valid_ins_in_rs(rs_fp_multi)>=0:
+-        index = check_valid_ins_in_rs(rs_fp_multi)
+-        fu_fp_multi.append(fu_entry())
+-        add_entry_into_fu(fu_fp_multi, rs_fp_multi[index])
+-        if ROB[find_ROB_entry(ROB, rs_fp_multi[index].dest_tag)].issue[0] < cycle:
+-            fu_exe(fu_fp_multi, results_buffer, ROB, time_fu_fp_multi, cycle, PC)
+-        # remove ins from rs 
+-        rs_fp_multi[index].busy = 0
+-
++                sim.results.append(entry)
+--- original/code/init.py
++++ Ahmed_Ahmed_Tomasulo/code/init.py
+@@ -1,70 +1,334 @@
+-# Qing 
+-# 21st May 2017 
+-
+-from collections import namedtuple
+-
+-'''define data types'''
+-# reservation station 
+-def rs_entry():
+-    rs_entry = namedtuple('rs_entry', 'busy, op, tag_1st, value_1st, valid_1st, tag_2nd, value_2nd, valid_2nd, dest_tag')
+-    temp = rs_entry
+-    return temp 
+-# functional unit 
+-def fu_entry():
+-    fu_entry = namedtuple('fu_entry', 'cycle, op, value1, value2, dest_tag')
+-    temp = fu_entry
+-    return temp
+-# function result 
+-def fu_result():
+-    fu_result = namedtuple('fu_result', 'value, dest_tag')
+-    temp = fu_result
+-    return temp
+-# ld/sd entry
+-def ld_sd_entry():
+-    ld_sd_entry = namedtuple('ld_sd_entry', 'ld_sd_tag, ready, op, address, data, dest_tag, immediate, reg_tag, reg_value, valid')
+-    temp = ld_sd_entry
+-    return temp
+-# ld/sd exe
+-def ld_sd_exe():
+-    ld_sd_exe = namedtuple('ld_sd_exe', 'busy, cycle, value1, value2, dest_tag')
+-    temp = ld_sd_exe
+-    return temp
+-# ld/sd mem
+-def ld_sd_mem():
+-    ld_sd_mem = namedtuple('ld_sd_mem', 'busy, cycle, op, data, address, dest_tag')
+-    temp = ld_sd_mem
+-    return temp
+-# cdb
+-def cdb():
+-    cdb = namedtuple('cdb', 'valid, value, dest_tag')
+-    temp = cdb
+-    return temp
+-# ROB_entry 
+-def ROB_entry():
+-    ROB_entry = namedtuple('ROB_entry', 'ROB_tag, PC, value, dest_tag, issue, exe, mem, cdb, commit')
+-    temp = ROB_entry
+-    temp.issue = []
+-    temp.exe = []
+-    temp.mem = []
+-    temp.cdb = []
+-    temp.commit =[]
+-    return temp
+-# PC 
+-def PC():
+-    PC = namedtuple('PC', 'PC, valid')
+-    temp = PC
+-    return temp
+-# function: read instructions
++"""Configuration and state types for the Tomasulo simulator.
++
++Based on the starter by Qing (May 2017).
++Assignment modifications: Ahmed Ahmed.
++"""
++from dataclasses import asdict, dataclass, field, fields
++import math
++import re
++
++__author__ = "Ahmed Ahmed"
++
++
++@dataclass
++class Config:
++    issue_width: int = 1
++    writeback_width: int = 1
++    commit_width: int = 1
++    rs_int: int = 4
++    rs_fp_add: int = 3
++    rs_fp_mul: int = 2
++    lsq_size: int = 5
++    rob_size: int = 64
++    int_latency: int = 1
++    fp_add_latency: int = 4
++    fp_mul_latency: int = 15
++    addr_latency: int = 1
++    mem_latency: int = 5
++    int_units: int = 1
++    fp_add_units: int = 1
++    fp_mul_units: int = 1
++    addr_units: int = 1
++    mem_units: int = 1
++    memory_size: int = 256
++    branch_prediction: bool = True
++    execution_order: str = "out_of_order"
++    max_cycles: int = 100000
++
++    def __post_init__(self):
++        for item in fields(self):
++            if item.name in ("execution_order", "branch_prediction"):
++                continue
++            value = getattr(self, item.name)
++            if type(value) is not int or value < 1:
++                raise ValueError(f"{item.name} must be a positive integer")
++        for name in ("issue_width", "writeback_width", "commit_width"):
++            if getattr(self, name) > 4:
++                raise ValueError(f"{name} must be between 1 and 4")
++        if self.execution_order not in ("out_of_order", "in_order"):
++            raise ValueError("execution_order must be out_of_order or in_order")
++        if type(self.branch_prediction) is not bool:
++            raise ValueError("branch_prediction must be true or false")
++        if self.memory_size < 4:
++            raise ValueError("memory_size must hold at least one four-byte value")
++
++    @classmethod
++    def from_dict(cls, values):
++        if not isinstance(values, dict):
++            raise ValueError("configuration must be a JSON object")
++        unknown = set(values) - {f.name for f in fields(cls)}
++        if unknown:
++            raise ValueError("Unknown configuration keys: " + ", ".join(sorted(unknown)))
++        return cls(**values)
++
++    def to_dict(self):
++        return asdict(self)
++
++
++@dataclass(frozen=True)
++class Instruction:
++    op: str
++    text: str
++    dest: str | None = None
++    sources: tuple = ()
++    immediate: int = 0
++    target: int | None = None
++
++    @property
++    def kind(self):
++        if self.op in ("Ld", "Sd"):
++            return "memory"
++        if self.op in ("Add.d", "Sub.d"):
++            return "fp_add"
++        if self.op == "Mult.d":
++            return "fp_mul"
++        return "int"
++
++    @property
++    def branch(self):
++        return self.op in ("Bne", "Beq")
++
++
++@dataclass
++class Operand:
++    value: int | float | None = None
++    tag: int | None = None
++    ready_cycle: int = 0
++
++    def ready(self, cycle):
++        return self.tag is None and self.ready_cycle < cycle
++
++
++@dataclass
++class Entry:
++    id: int
++    pc: int
++    instruction: Instruction
++    operands: list
++    issue: int
++    exe_start: int | None = None
++    exe_end: int | None = None
++    mem_start: int | None = None
++    mem_end: int | None = None
++    wb: int | None = None
++    commit: int | None = None
++    result: int | float | None = None
++    address: int | None = None
++    complete_cycle: int | None = None
++    ready_cycle: int | None = None
++    forwarded_from: int | None = None
++    status: str = "issued"
++    squashed: bool = False
++    squash_cycle: int | None = None
++    squash_reason: str | None = None
++    predicted_taken: bool | None = None
++    predicted_next_pc: int | None = None
++    actual_taken: bool | None = None
++    mispredicted: bool | None = None
++    unresolved_store_ids: list = field(default_factory=list)
++
++    def trace(self):
++        return {
++            "id": self.id, "pc": self.pc, "text": self.instruction.text,
++            "issue": self.issue, "exe_start": self.exe_start,
++            "exe_end": self.exe_end, "mem_start": self.mem_start,
++            "mem_end": self.mem_end, "wb": self.wb, "commit": self.commit,
++            "forwarded_from": self.forwarded_from,
++            "status": self.status, "squashed": self.squashed,
++            "squash_cycle": self.squash_cycle, "squash_reason": self.squash_reason,
++            "predicted_taken": self.predicted_taken,
++            "predicted_next_pc": self.predicted_next_pc,
++            "actual_taken": self.actual_taken, "mispredicted": self.mispredicted,
++        }
++
++
++def register_name(token, prefix=None):
++    if not isinstance(token, str):
++        raise ValueError("register names must be strings")
++    name = token.upper()
++    if not re.fullmatch(r"[RF](?:[0-9]|[12][0-9]|3[01])", name):
++        raise ValueError(f"Invalid register {token!r}; use R0..R31 or F0..F31")
++    if prefix and not name.startswith(prefix):
++        raise ValueError(f"Expected a {prefix} register, got {token}")
++    return name
++
++
++def numeric(value, label):
++    if type(value) not in (int, float) or not math.isfinite(value):
++        raise ValueError(f"{label} must be a finite number")
++    return value
++
++
++def parse_program(text):
++    """Parse whitespace/comma assembly; branches use word offsets or labels.
++
++    Numeric target = current instruction index + 1 + offset.
++    Comments begin with # or ;. A target one past the last instruction exits.
++    """
++    if not isinstance(text, str):
++        raise ValueError("program must be assembly text")
++    lines, labels = [], {}
++    for line_no, raw in enumerate(text.splitlines(), 1):
++        line = re.split(r"[#;]", raw, maxsplit=1)[0].strip()
++        if not line:
++            continue
++        while ":" in line:
++            label, line = line.split(":", 1)
++            label = label.strip().lower()
++            if not re.fullmatch(r"[A-Za-z_]\w*", label) or label in labels:
++                raise ValueError(f"Line {line_no}: invalid or duplicate label {label!r}")
++            labels[label] = len(lines)
++            line = line.strip()
++        if line:
++            lines.append((line_no, line))
++    aliases = {v.lower(): v for v in (
++        "Add", "Addi", "Sub", "Add.d", "Sub.d", "Mult.d", "Ld", "Sd", "Bne", "Beq"
++    )}
++    aliases["mul.d"] = "Mult.d"
++    program = []
++    for pc, (line_no, line) in enumerate(lines):
++        try:
++            tokens = line.replace(",", " ").split()
++            op = aliases.get(tokens[0].lower())
++            if op is None:
++                raise ValueError(f"unsupported opcode {tokens[0]!r}")
++            if op in ("Ld", "Sd"):
++                # Spaces inside offset(base) are accepted.
++                if len(tokens) < 3:
++                    raise ValueError("load/store expects register and offset(base)")
++                reg = register_name(tokens[1], "F")
++                address = "".join(tokens[2:])
++                match = re.fullmatch(r"([+-]?\d+)\((R\d+)\)", address, re.I)
++                if not match:
++                    raise ValueError("address must be integer offset(R0..R31)")
++                base = register_name(match[2], "R")
++                ins = Instruction(op, line, reg if op == "Ld" else None,
++                                  (base,) if op == "Ld" else (base, reg), int(match[1]))
++            elif op in ("Bne", "Beq"):
++                if len(tokens) != 4:
++                    raise ValueError("branch expects two integer registers and a target")
++                sources = (register_name(tokens[1], "R"), register_name(tokens[2], "R"))
++                raw_target = tokens[3].lower()
++                if raw_target in labels:
++                    target = labels[raw_target]
++                    offset = target - pc - 1
++                else:
++                    try:
++                        offset = int(raw_target)
++                    except ValueError as exc:
++                        raise ValueError(f"unknown branch label {raw_target!r}") from exc
++                    target = pc + 1 + offset
++                if not 0 <= target <= len(lines):
++                    raise ValueError("branch target is outside the program")
++                ins = Instruction(op, line, sources=sources, immediate=offset, target=target)
++            else:
++                if len(tokens) != 4:
++                    raise ValueError("arithmetic instruction expects three operands")
++                prefix = "F" if ".d" in op else "R"
++                dest = register_name(tokens[1], prefix)
++                source1 = register_name(tokens[2], prefix)
++                if op == "Addi":
++                    ins = Instruction(op, line, dest, (source1,), int(tokens[3]))
++                else:
++                    ins = Instruction(op, line, dest,
++                                      (source1, register_name(tokens[3], prefix)))
++            program.append(ins)
++        except ValueError as exc:
++            raise ValueError(f"Line {line_no}: {exc}") from exc
++    return program
++
++
+ def read_instruction(codefile):
+-    with open(codefile) as f:
+-            instructions = f.read().splitlines()
+-    return instructions
+-# function: build rs
+-def build_rs(num):
+-    rs = []
+-    for _ in range(num):
+-        temp = rs_entry()
+-        temp.busy = 0
+-        rs.extend([temp])
+-    return rs
+-
++    """Compatibility convenience: read and parse an assembly file."""
++    with open(codefile, encoding="utf-8") as stream:
++        return parse_program(stream.read())
++
++
++def parse_input(text):
++    """Read the handout's single-file hardware, initial state, and assembly format.
++
++    The load/store row gives LSQ entries, address EX latency, memory latency,
++    and address-unit count. Memory itself remains single-ported. Numeric branch
++    displacements are in words; data addresses are byte addresses. Return
++    (program, Config, initial_registers, initial_memory).
++    """
++    if not isinstance(text, str):
++        raise ValueError("input must be text")
++    values, registers, memory, assembly = {}, {}, {}, []
++    row_fields = {
++        "integer adder": ("rs_int", "int_latency", "int_units"),
++        "fp adder": ("rs_fp_add", "fp_add_latency", "fp_add_units"),
++        "fp multiplier": ("rs_fp_mul", "fp_mul_latency", "fp_mul_units"),
++        "load/store unit": ("lsq_size", "addr_latency", "mem_latency", "addr_units"),
++    }
++    config_names = {f.name.replace("_", " "): f.name for f in fields(Config)}
++    config_names["rob entries"] = "rob_size"
++    state_pattern = re.compile(r"(mem\s*\[\s*[+-]?\d+\s*\]|[rf]\d+)\s*=\s*([^,]+)", re.I)
++
++    def number(token, label):
++        try:
++            result = int(token) if re.fullmatch(r"[+-]?\d+", token) else float(token)
++        except ValueError as exc:
++            raise ValueError(f"{label} must be numeric") from exc
++        return numeric(result, label)
++
++    for line_no, raw in enumerate(text.splitlines(), 1):
++        line = re.split(r"[#;]", raw, maxsplit=1)[0].strip()
++        if not line:
++            assembly.append("")
++            continue
++        try:
++            row = re.match(r"^(integer\s+adder|fp\s+adder|fp\s+multiplier|load\s*/\s*store\s+unit)\s*:?\s+(.+)$", line, re.I)
++            if row:
++                name = " ".join(row[1].lower().split())
++                name = re.sub(r"\s*/\s*", "/", name)
++                keys = row_fields[name]
++                tokens = row[2].replace(",", " ").split()
++                if len(tokens) != len(keys) or any(not re.fullmatch(r"\d+", token) for token in tokens):
++                    raise ValueError(f"{name} needs {len(keys)} positive integer columns")
++                values.update(zip(keys, map(int, tokens)))
++            elif "=" in line and re.match(r"^(mem\s*\[|[rf]\d+\s*=)", line, re.I):
++                # Full coverage prevents an invalid assignment being silently ignored.
++                for assignment in line.split(","):
++                    match = state_pattern.fullmatch(assignment.strip())
++                    if not match:
++                        raise ValueError(f"invalid initial-state assignment {assignment.strip()!r}")
++                    target, token = match[1], match[2].strip()
++                    value = number(token, target)
++                    if target.lower().startswith("mem"):
++                        address = int(re.search(r"\[\s*([+-]?\d+)\s*\]", target)[1])
++                        memory[address] = value
++                    else:
++                        reg = register_name(target)
++                        if reg.startswith("R") and int(value) != value:
++                            raise ValueError(f"{reg} must have an integer value")
++                        if reg == "R0" and value != 0:
++                            raise ValueError("R0 is hardwired to zero")
++                        registers[reg] = int(value) if reg.startswith("R") else float(value)
++            elif "=" in line:
++                name, value = (part.strip() for part in line.split("=", 1))
++                name = " ".join(name.lower().replace("_", " ").split())
++                key = config_names.get(name)
++                if key is None:
++                    raise ValueError(f"unknown hardware parameter {name!r}")
++                if key == "branch_prediction":
++                    if value.lower() not in ("true", "false"):
++                        raise ValueError("branch_prediction must be true or false")
++                    values[key] = value.lower() == "true"
++                elif key == "execution_order":
++                    values[key] = value.lower().replace(" ", "_")
++                else:
++                    values[key] = int(value)
++            elif "cycles in ex" in line.lower() and "cycles in mem" in line.lower():
++                pass  # Optional plain-text column heading.
++            else:
++                assembly.append(line)
++                continue
++            assembly.append("")  # Keep original source line numbers in errors.
++        except (ValueError, OverflowError) as exc:
++            raise ValueError(f"Line {line_no}: {exc}") from exc
++    config = Config.from_dict(values)
++    for address in memory:
++        if not 0 <= address <= config.memory_size - 4:
++            raise ValueError(f"Memory address {address} must be in 0..{config.memory_size - 4}")
++    return parse_program("\n".join(assembly)), config, registers, memory
+--- original/code/issue.py
++++ Ahmed_Ahmed_Tomasulo/code/issue.py
+@@ -1,247 +1,45 @@
+-# Qing 
+-# 21st May 2017
++"""In-order multi-issue and register renaming.
++Starter: Qing (May 2017). Assignment modifications: Ahmed Ahmed.
++"""
++from init import Entry, Operand
+ 
+-"""
+-1. put 1 instruction in ROB
+-2. put this instruction in RS/ld_sd_queue
+-3. update RAT
+-"""
+-from collections import namedtuple, deque
+-from init import ld_sd_entry, ROB_entry
+ 
+-# function: find a tag for ld_sd_entry 
+-def find_tag_new_ldsd_entry(ld_sd_queue, size_ld_sd_queue):
+-    existing_tag = []
+-    tag_pool = []
+-    for i in range(len(ld_sd_queue)):
+-        existing_tag.append(ld_sd_queue[i].ld_sd_tag)
+-    for i in range(size_ld_sd_queue):
+-        tag_pool.append('ldsd'+str(i))
+-    return list(set(tag_pool)-set(existing_tag))[0]
+-
+-# function put ins into ROB 
+-def put_ins_into_ROB(ROB, size_ROB, PC, cycle, ins, ldsd_tag):
+-    ROB.append(ROB_entry())
+-    # ROB_tag
+-    if len(ROB)==1:
+-        ROB[-1].ROB_tag = 'ROB0'
+-    else:
+-        index = ROB[-2].ROB_tag[3:]
+-        ROB[-1].ROB_tag = 'ROB'+str((int(index)+1)%size_ROB)
+-    # PC
+-    ROB[-1].PC = PC.PC
+-    # dest_tag
+-    if ins.split(' ')[0]=='Sd': # SD
+-        ROB[-1].dest_tag = ldsd_tag
+-    elif ins.split(' ')[0]=='Bne': # BNE
+-        ROB[-1].dest_tag = int(ins.split(' ')[-1]) 
+-    else: # ALU and LD instructions
+-        ROB[-1].dest_tag = ins.split(' ')[1]
+-    # issue 
+-    ROB[-1].issue.append(cycle)
+-
+-# function: put ins into reservation station
+-def put_ins_into_rs(station, index, ins, ROB, rat_int, rat_fp):
+-    entry = station[index]
+-    entry.busy = 1
+-    entry.op = ins.split(' ')[0]
+-    # reg 1
+-    register = ins.split(' ')[2] # register name 
+-    if register[0] == 'F':
+-        if (type(rat_fp[int(register[1:])]) == str):
+-            entry.tag_1st = rat_fp[int(register[1:])]
+-            entry.valid_1st = 0
++def issue(sim):
++    """Issue a contiguous program-order prefix; a full resource stops the bundle."""
++    if sim.cycle < sim.fetch_resume_cycle:
++        return
++    for _ in range(sim.config.issue_width):
++        if sim.branch_pending is not None or sim.pc >= len(sim.program):
++            break
++        ins = sim.program[sim.pc]
++        if len(sim.rob) >= sim.config.rob_size:
++            break
++        if ins.kind == "memory":
++            if len(sim.lsq) >= sim.config.lsq_size:
++                break
++        elif len(sim.stations[ins.kind]) >= sim.rs_capacity[ins.kind]:
++            break
++        # Read every source BEFORE installing the destination rename.
++        operands = [sim.read_operand(name) for name in ins.sources]
++        if ins.op == "Addi":
++            operands.append(Operand(ins.immediate))
++        entry = Entry(sim.next_id, sim.pc, ins, operands, sim.cycle)
++        entry.status = "issued"
++        sim.next_id += 1
++        sim.rob.append(entry)
++        sim.history.append(entry)
++        sim.by_id[entry.id] = entry
++        if ins.kind == "memory":
++            sim.lsq.append(entry)
+         else:
+-            entry.value_1st = rat_fp[int(register[1:])]
+-            entry.valid_1st = 1
+-    elif register[0] == 'R':
+-        if (type(rat_int[int(register[1:])]) == str):
+-            entry.tag_1st = rat_int[int(register[1:])]
+-            entry.valid_1st = 0
+-        else:
+-            entry.value_1st = rat_int[int(register[1:])]
+-            entry.valid_1st = 1
+-    else:
+-        pass
+-    # reg 2
+-    register = ins.split(' ')[3] # register name 
+-    if register[0] == 'F':
+-        if (type(rat_fp[int(register[1:])]) == str):
+-            entry.tag_2nd = rat_fp[int(register[1:])]
+-            entry.valid_2nd = 0
+-        else:
+-            entry.value_2nd = rat_fp[int(register[1:])]
+-            entry.valid_2nd = 1
+-    elif register[0] == 'R':
+-        if (type(rat_int[int(register[1:])]) == str):
+-            entry.tag_2nd = rat_int[int(register[1:])]
+-            entry.valid_2nd = 0
+-        else:
+-            entry.value_2nd = rat_int[int(register[1:])]
+-            entry.valid_2nd = 1
+-    else: # immediate number
+-        entry.value_2nd = int(ins.split(' ')[3])
+-        entry.valid_2nd = 1
+-    # dest_tag
+-    entry.dest_tag = ROB[-1].ROB_tag
+-
+-# function: put bne into rs
+-def put_bne_into_rs(rs_int_adder, index, ins, rat_int, rat_fp, ROB):
+-    entry = rs_int_adder[index]
+-    entry.busy = 1
+-    entry.op = ins.split(' ')[0]
+-    # reg 1
+-    register = ins.split(' ')[1] # register name 
+-    if register[0] == 'F':
+-        if (type(rat_fp[int(register[1:])]) == str):
+-            entry.tag_1st = rat_fp[int(register[1:])]
+-            entry.valid_1st = 0
+-        else:
+-            entry.value_1st = rat_fp[int(register[1:])]
+-            entry.valid_1st = 1
+-    elif register[0] == 'R':
+-        if (type(rat_int[int(register[1:])]) == str):
+-            entry.tag_1st = rat_int[int(register[1:])]
+-            entry.valid_1st = 0
+-        else:
+-            entry.value_1st = rat_int[int(register[1:])]
+-            entry.valid_1st = 1
+-    else:
+-        pass
+-    # reg 2
+-    register = ins.split(' ')[2] # register name 
+-    if register[0] == 'F':
+-        if (type(rat_fp[int(register[1:])]) == str):
+-            entry.tag_2nd = rat_fp[int(register[1:])]
+-            entry.valid_2nd = 0
+-        else:
+-            entry.value_2nd = rat_fp[int(register[1:])]
+-            entry.valid_2nd = 1
+-    elif register[0] == 'R':
+-        if (type(rat_int[int(register[1:])]) == str):
+-            entry.tag_2nd = rat_int[int(register[1:])]
+-            entry.valid_2nd = 0
+-        else:
+-            entry.value_2nd = rat_int[int(register[1:])]
+-            entry.valid_2nd = 1
+-    # dest_tag
+-    entry.dest_tag = ROB[-1].ROB_tag 
+-
+-# function: put ins into ld_sd_queue
+-def put_ins_into_ldsd(ldsd_tag, ld_sd_queue, ins, ROB, rat_int, rat_fp):
+-    ld_sd_queue.append(ld_sd_entry())
+-    # ld_sd_tag
+-    ld_sd_queue[-1].ld_sd_tag = ldsd_tag
+-    ld_sd_queue[-1].ready = 0
+-    ld_sd_queue[-1].op = ins.split(' ')[0]
+-    if ld_sd_queue[-1].op == 'Sd':
+-        register = ins.split(' ')[1] # register name 
+-        ld_sd_queue[-1].data = rat_fp[int(register[1:])]
+-        
+-    ld_sd_queue[-1].dest_tag = ROB[-1].ROB_tag
+-    # immediate and reg value 
+-    ld_sd_queue[-1].immediate = int(ins.split(' ')[-1][:-4])
+-    register = ins.split(' ')[-1][-3:-1] # register name 
+-    if (type(rat_int[int(register[1:])]) == str):
+-        ld_sd_queue[-1].reg_tag = rat_int[int(register[1:])]
+-        ld_sd_queue[-1].valid = 0
+-    else:
+-        ld_sd_queue[-1].reg_value = rat_int[int(register[1:])]
+-        ld_sd_queue[-1].valid = 1
+-
+-# function: check space of reservation station
+-def check_rs_space(station):
+-    index = -1
+-    for i in range(len(station)):
+-        if station[i].busy == 0:
+-            index = i
+-            break 
+-    return index
+-
+-# update RAT
+-def update_rat(ROB, rat_int, rat_fp):
+-    if ROB[-1].dest_tag[0] == 'F':
+-        rat_fp[int(ROB[-1].dest_tag[1:])] = ROB[-1].ROB_tag
+-    elif ROB[-1].dest_tag[0] == 'R':
+-        rat_int[int(ROB[-1].dest_tag[1:])] = ROB[-1].ROB_tag
+-    else:
+-        pass
+-
+-""""""
+-def issue(cycle, PC, instructions, ROB, size_ROB, 
+-        rs_int_adder, 
+-        rs_fp_adder, 
+-        rs_fp_multi, 
+-        ld_sd_queue, size_ld_sd_queue, 
+-        rat_int, rat_fp):
+-    # fetch 1 instruction 
+-    ins = instructions[PC.PC]
+-    op = ins.split(' ')[0] 
+-    '''decode'''
+-    # LD/SD instructions
+-    if (op=='Ld')|(op=='Sd'):
+-        # check space
+-        if (len(ROB)<size_ROB)&(len(ld_sd_queue)<size_ld_sd_queue):
+-            # find ldsd_tag
+-            ldsd_tag = find_tag_new_ldsd_entry(ld_sd_queue, size_ld_sd_queue)
+-            # put ins into ROB
+-            put_ins_into_ROB(ROB, size_ROB, PC, cycle, ins, ldsd_tag)
+-            # put ins into ld_sd_queue
+-            put_ins_into_ldsd(ldsd_tag, ld_sd_queue, ins, ROB, rat_int, rat_fp)
+-            # update RAT
+-            update_rat(ROB, rat_int, rat_fp)
+-            # PC
+-            PC.PC +=1
+-    # integer adder instructions
+-    elif (op=='Add')|(op=='Addi')|(op=='Sub'):
+-        # check space
+-        if (len(ROB)<size_ROB)&(check_rs_space(rs_int_adder)>=0):
+-            # put ins into ROB
+-            put_ins_into_ROB(ROB, size_ROB, PC, cycle, ins, '')
+-            # put ins into rs_int_adder
+-            index = check_rs_space(rs_int_adder)
+-            put_ins_into_rs(rs_int_adder, index, ins, ROB, rat_int, rat_fp)
+-            # update RAT
+-            update_rat(ROB, rat_int, rat_fp)
+-            # PC
+-            PC.PC +=1
+-    # fp adder instructions
+-    elif (op=='Add.d')|(op=='Sub.d'):
+-        # check space
+-        if (len(ROB)<size_ROB)&(check_rs_space(rs_fp_adder)>=0):
+-            # put ins into ROB
+-            put_ins_into_ROB(ROB, size_ROB, PC, cycle, ins, '')
+-            # put ins into rs_fp_adder
+-            index = check_rs_space(rs_fp_adder)
+-            put_ins_into_rs(rs_fp_adder, index, ins, ROB, rat_int, rat_fp)
+-            # update RAT
+-            update_rat(ROB, rat_int, rat_fp)
+-            # PC
+-            PC.PC +=1
+-    # fp multiplier instructions
+-    elif (op=='Mult.d'): 
+-        # check space
+-        if (len(ROB)<size_ROB)&(check_rs_space(rs_fp_multi)>=0):
+-            # put ins into ROB
+-            put_ins_into_ROB(ROB, size_ROB, PC, cycle, ins, '')
+-            # put ins into rs_fp_multi
+-            index = check_rs_space(rs_fp_multi)
+-            put_ins_into_rs(rs_fp_multi, index, ins, ROB, rat_int, rat_fp)
+-            # update RAT
+-            update_rat(ROB, rat_int, rat_fp)
+-            # PC
+-            PC.PC +=1
+-    # Bne 
+-    elif (op=='Bne'):
+-        # check space
+-        if (len(ROB)<size_ROB)&(check_rs_space(rs_int_adder)>=0):
+-            # put ins into ROB
+-            put_ins_into_ROB(ROB, size_ROB, PC, cycle, ins, '')
+-            # put ins into rs_int_adder
+-            index = check_rs_space(rs_int_adder)
+-            put_bne_into_rs(rs_int_adder, index, ins, rat_int, rat_fp, ROB)
+-            # PC
+-            PC.valid = 0
+-    else:
+-        pass
+-
++            sim.stations[ins.kind].append(entry)
++        if ins.dest is not None and ins.dest != "R0":
++            sim.rat[ins.dest] = entry.id
++        sim.pc += 1
++        if ins.branch:
++            if sim.config.branch_prediction:
++                sim.pc = sim.predict_branch(entry)
++            else:
++                # Optional comparison mode; assignment mode predicts the next PC.
++                sim.branch_pending = entry.id
++                break
+--- original/code/main.py
++++ Ahmed_Ahmed_Tomasulo/code/main.py
+@@ -1,127 +1,71 @@
+-# Qing 
+-# 21st May 2017 
++"""Command-line entry point.
++Starter: Qing (May 2017). Assignment modifications: Ahmed Ahmed.
++"""
++import argparse
++import csv
++import json
++from pathlib import Path
++from init import Config, parse_input, parse_program
++from simulator import Simulator
++from print_status import format_result
+ 
+-from copy import deepcopy
+-from collections import deque, namedtuple
+-from init import read_instruction, build_rs, ld_sd_entry, ld_sd_exe, ld_sd_mem, cdb, ROB_entry, PC
+-from print_status import ps, pss
+-from issue import issue, check_rs_space
+-from exe import exe 
+-from mem import mem
+-from wb import wb 
+-from commit import commit
+-'''initialize'''
+-# read instructions into a list 
+-instructions = read_instruction('code.in')
+-'''initialize regs, RAT, memory''' 
+-# integer REG
+-reg_int = []
+-for i in range(32):
+-    reg_int.extend([0])
+-reg_int[1] = 12
+-reg_int[2] = 32
+-rat_int = deepcopy(reg_int)
+-# fp REG
+-reg_fp = []
+-for i in range(32):
+-    reg_fp.extend([0])
+-reg_fp[20] = 3.0
+-rat_fp = deepcopy(reg_fp)
+-# memory 
+-memory = []
+-for i in range(256):
+-    memory.extend([0])
+-memory[4] = 3.0
+-memory[8] = 2.0
+-memory[12] = 1.0
+-memory[24] = 6.0
+-memory[28] = 5.0
+-memory[32] = 4.0
+-'''intialize reservation stations'''
+-# 2 integer adder rs 
+-size_rs_int_adder = 4 
+-rs_int_adder = build_rs(size_rs_int_adder)
+-# 3 fp adder rs
+-size_rs_fp_adder = 3
+-rs_fp_adder = build_rs(size_rs_fp_adder)
+-# 2 fp multiplier rs
+-size_rs_fp_multi = 2
+-rs_fp_multi = build_rs(size_rs_fp_multi)
+-'''initilize function unit'''
+-# 1 cycle in int adder 
+-fu_int_adder = deque()
+-time_fu_int_adder = 1
+-# 3 cycles in fp adder 
+-fu_fp_adder = deque()
+-time_fu_fp_adder = 4
+-# 20 cycles in fp multiplier
+-fu_fp_multi = deque()
+-time_fu_fp_multi = 15
+-'''initialize load/store queue'''
+-ld_sd_queue = deque()
+-size_ld_sd_queue = 5 
+-ld_sd_exe = ld_sd_exe()
+-ld_sd_exe.busy = 0
+-time_ld_sd_exe = 1
+-ld_sd_mem = ld_sd_mem()
+-ld_sd_mem.busy = 0
+-time_ld_sd_mem = 5
+-'''initialize ROB'''
+-ROB = deque()
+-size_ROB = 64
+-'''initialize CDB'''
+-results_buffer = deque()
+-cdb = cdb()
+-cdb.valid = 0
+-"""issue first instruction"""
+-# instruction pointer 
+-PC = PC()
+-PC.PC = 0
+-PC.valid = 1 
+-cycle = 1
++__author__ = "Ahmed Ahmed"
+ 
+-# print title 
+-item = ''.ljust(30)
+-item += 'ISSUE'.ljust(15)
+-item += 'EXE'.ljust(15)
+-item += 'MEM'.ljust(15)
+-item += 'WB'.ljust(15)
+-item += 'COMMIT'.ljust(15)
+-print (item)
+ 
+-# main
+-while (len(ROB)>0)|(cycle==1):
+-    
+-    '''ISSUE stage'''
+-    if (PC.PC<len(instructions))&(PC.valid==1):
+-        issue(cycle, PC, instructions, ROB, size_ROB, 
+-                rs_int_adder, 
+-                rs_fp_adder, 
+-                rs_fp_multi, 
+-                ld_sd_queue, size_ld_sd_queue, 
+-                rat_int, rat_fp)
++def main(argv=None):
++    parser = argparse.ArgumentParser(description="Tomasulo simulator by Ahmed Ahmed")
++    source = parser.add_mutually_exclusive_group()
++    source.add_argument("--input", type=Path, help="assignment text file with hardware, initial state, and assembly")
++    source.add_argument("--program", type=Path, help="legacy assembly-only file; optionally pair with --config")
++    parser.add_argument("--config", type=Path, help="legacy JSON hardware object, optionally with registers/memory")
++    parser.add_argument("--issue-width", type=int)
++    parser.add_argument("--writeback-width", type=int)
++    parser.add_argument("--commit-width", type=int)
++    parser.add_argument("--execution-order", choices=("out_of_order", "in_order"))
++    parser.add_argument("--max-cycles", type=int)
++    parser.add_argument("--json", type=Path, dest="json_output")
++    parser.add_argument("--trace-csv", type=Path)
++    args = parser.parse_args(argv)
++    try:
++        if args.input and args.config:
++            raise ValueError("--config belongs to legacy --program mode; put hardware in --input instead")
++        if args.input or not (args.program or args.config):
++            input_path = args.input or Path(__file__).resolve().parent.parent / "examples" / "assignment_demo.in"
++            program, initial_config, registers, memory = parse_input(input_path.read_text(encoding="utf-8"))
++            values = initial_config.to_dict()
++        else:
++            program_path = args.program or Path(__file__).with_name("code.in")
++            program = parse_program(program_path.read_text(encoding="utf-8"))
++            payload = json.loads(args.config.read_text(encoding="utf-8")) if args.config else {}
++            if not isinstance(payload, dict):
++                raise ValueError("configuration must be an object")
++            registers, memory = payload.get("registers"), payload.get("memory")
++            if "hardware" in payload:
++                if set(payload) - {"hardware", "registers", "memory"}:
++                    raise ValueError("unknown top-level configuration keys")
++                values = dict(payload["hardware"])
++            else:
++                values = {k:v for k,v in payload.items() if k not in ("registers", "memory")}
++        for name in ("issue_width", "writeback_width", "commit_width", "execution_order", "max_cycles"):
++            if getattr(args, name) is not None:
++                values[name] = getattr(args, name)
++        config = Config.from_dict(values)
++        result = Simulator(program, config, registers, memory).run()
++        print(format_result(result))
++        if args.json_output:
++            args.json_output.parent.mkdir(parents=True, exist_ok=True)
++            args.json_output.write_text(json.dumps(result, indent=2) + "\n")
++        if args.trace_csv:
++            args.trace_csv.parent.mkdir(parents=True, exist_ok=True)
++            with args.trace_csv.open("w", newline="") as stream:
++                columns = ["id", "pc", "text", "issue", "exe_start", "exe_end", "mem_start", "mem_end", "wb", "commit", "forwarded_from", "status", "squashed", "squash_cycle", "squash_reason", "predicted_taken", "predicted_next_pc", "actual_taken", "mispredicted"]
++                writer = csv.DictWriter(stream, fieldnames=columns)
++                writer.writeheader()
++                writer.writerows(result["instructions"])
++    except (ValueError, OSError, RuntimeError, TypeError) as exc:
++        parser.error(str(exc))
++    return 0
+ 
+-    '''EXE stage'''
+-    exe(fu_int_adder, time_fu_int_adder, 
+-        fu_fp_adder, time_fu_fp_adder, 
+-        fu_fp_multi, time_fu_fp_multi, results_buffer,  
+-        rs_int_adder, rs_fp_adder, rs_fp_multi, 
+-        ld_sd_exe, time_ld_sd_exe, ld_sd_queue,
+-        cycle, ROB, PC)
+ 
+-    '''MEM stage'''
+-    mem(ld_sd_queue, ld_sd_mem, time_ld_sd_mem, results_buffer,
+-        memory, ROB, cycle)
+-
+-    '''CDB stage'''
+-    wb(cdb, rat_int, rat_fp, 
+-        rs_int_adder, rs_fp_adder, rs_fp_multi,
+-        ld_sd_queue, ROB, cycle,
+-        results_buffer) 
+-    
+-    '''COMMIT stage'''
+-    commit(ROB, reg_int, reg_fp, cycle, instructions)
+-    
+-    # cycle number 
+-    cycle +=1  
+-    
++if __name__ == "__main__":
++    raise SystemExit(main())
+--- original/code/mem.py
++++ Ahmed_Ahmed_Tomasulo/code/mem.py
+@@ -1,153 +1,65 @@
+-# Qing 
+-# 26th May 2017
++"""Ordered store effects, store forwarding and speculative load disambiguation.
++Starter: Qing (May 2017). Assignment modifications: Ahmed Ahmed.
++"""
+ 
+-''' 
+-1. Ld forward check from Sd in ld_sd_queue
+-    -- only check nearest Sd instruction
+-2. execute LD/SD instruction in ld_sd_mem
+-    -- once LD instruction gets data, write back to ld_sd_queue
+-    -- LD instruction should be removed after get data  
+-    -- SD instruction should be removed at commit stage 
+-3. fetch new LD/SD instruction into ld_sd_mem
+-    -- if first element is SD, ready and has valid data, only SD to be committed can be fetched into ld_sd_mem 
+-    -- else put the first no-matched Ld into ld_sd_mem    
+-'''
+-from init import fu_result
+ 
+-# function: forward check from sd
+-# only check nearest sd
+-def forward_check_from_sd(ld_sd_queue, index):
+-    data = []
+-    for i in reversed(range(index)):
+-        if (ld_sd_queue[i].op=='Sd'):
+-            if (ld_sd_queue[i].address == ld_sd_queue[index].address):
+-                if (type(ld_sd_queue[i].data)==int)|(type(ld_sd_queue[i].data)==float):
+-                    data.append(ld_sd_queue[i].data)
++def load_source(sim, load):
++    """Return (eligible, value, forwarding id), checking all older stores."""
++    older = [e for e in sim.lsq if e.id < load.id and e.instruction.op == "Sd"]
++    unknown = [e for e in older if e.exe_end is None or e.exe_end >= sim.cycle]
++    known = [e for e in older if e.exe_end is not None and e.exe_end < sim.cycle]
++    matches = [e for e in known if abs(e.address - load.address) < 4]
++    if matches:
++        source = matches[-1]  # The youngest overlapping store determines the source.
++        # A partial overlap needs bytes from memory and stores: wait for commit.
++        # An exact match overwrites all four bytes and can forward directly.
++        if source.address != load.address:
++            return False, None, None
++        if not source.operands[1].ready(sim.cycle):
++            return False, None, None
++        load.unresolved_store_ids = [e.id for e in unknown]
++        return True, sim.memory.normalize(source.operands[1].value), source.id
++    # The handout permits access past unresolved stores; EX later checks aliases.
++    load.unresolved_store_ids = [e.id for e in unknown]
++    return True, sim.memory.get(load.address, 0.0), None
++
++
++def mem(sim):
++    # Units completing this cycle remain occupied for this cycle.
++    free = sim.config.mem_units - len(sim.memory_active)
++    for entry in sim.lsq:
++        if free == 0:
+             break
+-    return data
+-
+-# function: check if previous all Sds are ready and un-matched
+-def check_all_previous_Sd_no_match(ld_sd_queue, index):
+-    flag = True
+-    for i in range(index):
+-        # all Sd instructions
+-        if (ld_sd_queue[i].op=='Sd'):
+-            if ld_sd_queue[i].ready == 0:
+-                flag = False
+-                break 
+-            elif (ld_sd_queue[i].address==ld_sd_queue[index].address):
+-                flag = False
+-                break
+-            else:
+-                pass
+-    return flag
+- 
+-# function: find ROB entry by tag
+-def find_ROB_entry(ROB, tag):
+-    for index in range(len(ROB)):
+-        if ROB[index].ROB_tag == tag:
+-            break
+-    return index
+-
+-# function: put entry into ld_sd_mem
+-def put_entry_into_ld_sd_mem(ld_sd_mem, entry):
+-    ld_sd_mem.busy = 1
+-    ld_sd_mem.cycle = 0
+-    ld_sd_mem.address = entry.address
+-    ld_sd_mem.dest_tag = entry.dest_tag
+-    ld_sd_mem.op = entry.op
+-    if ld_sd_mem.op == 'Sd':
+-        ld_sd_mem.data = entry.data
+-
+-# function: check if Sd to be committed in next cycle 
+-def check_if_sd_committable(ld_sd_queue, ROB):
+-    flag = False
+-    if ld_sd_queue[0].ldsd_tag == ROB[0].dest_tag:
+-        flag = True
+-    if ld_sd_queue[0].ldsd_tag == ROB[1].dest_tag:
+-        # previous ins has been broadcasted
+-        if len(ROB[0].cdb)!=0:
+-            flag = True
+-    return flag
+-
+-# function: mem 
+-def mem(ld_sd_queue, ld_sd_mem, time_ld_sd_mem, results_buffer, 
+-        memory, ROB, cycle):
+-    '''look forward check for all Ld instructions'''
+-    index = -1
+-    remove_list = []
+-    for element in ld_sd_queue:
+-        index += 1
+-        if (index>=1)&(element.op=='Ld')&(element.ready==1):
+-            data = forward_check_from_sd(ld_sd_queue, index)
+-            if len(data)>0:
+-                # Ld gets data 
+-                results_buffer.append(fu_result())
+-                results_buffer[-1].value = data[0]
+-                results_buffer[-1].dest_tag = element.dest_tag
+-                # remove the Ld instruction
+-                remove_list.append(element)
+-                # write mem cylce in ROB
+-                index = find_ROB_entry(ROB, element.dest_tag)
+-                ROB[index].mem.append(cycle)
+-    # remove lookforwared Ld
+-    for element in remove_list:
+-        ld_sd_queue.remove(element)
+-    '''ld_sd_mem execution'''
+-    if ld_sd_mem.busy == 1:
+-        # write mem starting cycle 
+-        if ld_sd_mem.cycle == 0:
+-            index = find_ROB_entry(ROB, ld_sd_mem.dest_tag)
+-            ROB[index].mem.extend([cycle, cycle+time_ld_sd_mem-1])
+-            # for Sd, write commit cycle
+-            if ld_sd_mem.op == 'Sd':
+-                ROB[index].commit.append(cycle)
+-        
+-        # cycle ++
+-        ld_sd_mem.cycle +=1
+-        # get the data for Ld or reach the memory for Sd
+-        if ld_sd_mem.cycle == time_ld_sd_mem:
+-            ld_sd_mem.busy = 0
+-            if ld_sd_mem.op == 'Ld': 
+-                # put Ld data into results_buffer
+-                address = ld_sd_mem.address 
+-                data = memory[address]
+-                results_buffer.append(fu_result())
+-                results_buffer[-1].value = data
+-                results_buffer[-1].dest_tag = ld_sd_mem.dest_tag
+-            # put data into memory for Sd
+-            else:
+-                memory[ld_sd_mem.address]=ld_sd_mem.data
+-
+-    '''fetch new instruction into ld_sd_mem'''
+-    if (ld_sd_mem.busy==0)&(len(ld_sd_queue)>0):
+-        # flag_1st_ldsd
+-        flag_1st_ldsd_sent = False 
+-        # fetch the ld_sd_queue header if it's Sd, ready and to be committed
+-        if (ld_sd_queue[0].op=='Sd'):
+-            # check if this Sd is ready and to be commited 
+-            if (ld_sd_queue[0].ready==1):
+-                # check to be committed in next cycle
+-                if (check_if_sd_committable):
+-                    # already have data in Sd
+-                    if (type(ld_sd_queue[0].data)==int)|(type(ld_sd_queue[0].data)==float):
+-                        # put the Sd entry into ld_sd_mem
+-                        entry = ld_sd_queue.popleft()
+-                        put_entry_into_ld_sd_mem(ld_sd_mem, entry)
+-                        flag_1st_ldsd_sent = True
+-                        ld_sd_mem.busy = 1
+-
+-        # if the 1st Sd is not sent to ld_sd_mem, or the 1st is not Sd
+-        if (flag_1st_ldsd_sent==False):
+-            for index in range(len(ld_sd_queue)):
+-                # ready Ld
+-                if (ld_sd_queue[index].op=='Ld')&(ld_sd_queue[index].ready==1):
+-                    # haven't got data
+-                    if (type(ld_sd_queue[0].data)!=int)&(type(ld_sd_queue[0].data)!=float):
+-                        # all previous Sd instructions are ready but no address match 
+-                        if check_all_previous_Sd_no_match(ld_sd_queue, index): 
+-                            put_entry_into_ld_sd_mem(ld_sd_mem, ld_sd_queue[index])
+-                            ld_sd_queue.remove(ld_sd_queue[index])
+-                            ld_sd_mem.busy =1
+-                            break 
+-
++        if entry.mem_start is not None or entry.exe_end is None or entry.exe_end >= sim.cycle:
++            continue
++        if getattr(entry, "fault", None):
++            continue
++        if entry.instruction.op == "Sd":
++            # A store reaches memory only at the ROB head. Effects occur at commit.
++            if sim.rob[0] is not entry or not entry.operands[1].ready(sim.cycle):
++                continue
++            value, source = entry.operands[1].value, None
++        else:
++            eligible, value, source = load_source(sim, entry)
++            if not eligible:
++                continue
++        entry.mem_start = sim.cycle
++        entry.status = "memory"
++        # Forwarding uses a memory port for one cycle, independent of RAM latency.
++        latency = 1 if source is not None else sim.config.mem_latency
++        entry.mem_end = sim.cycle + latency - 1
++        entry.result = value
++        entry.forwarded_from = source
++        sim.memory_active.append(entry)
++        free -= 1
++    for entry in list(sim.memory_active):
++        if entry.mem_end != sim.cycle:
++            continue
++        sim.memory_active.remove(entry)
++        entry.complete_cycle = sim.cycle
++        entry.status = "memory_complete"
++        if entry.instruction.op == "Sd":
++            entry.ready_cycle = sim.cycle
++        else:
++            sim.results.append(entry)
++            sim.lsq.remove(entry)
+--- original/code/memory_model.py
++++ Ahmed_Ahmed_Tomasulo/code/memory_model.py
+@@ -0,0 +1,53 @@
++"""256-byte floating-point memory for the assignment. Author: Ahmed Ahmed.
++
++Byte addresses may be unaligned, as in the handout's illustrative input.
++Storage is real bytes; overlapping accesses therefore observe the same bytes.
++The mapping enumerates initialized/stored address views for readable output.
++"""
++from collections.abc import MutableMapping
++import math
++import struct
++
++
++class FloatMemory(MutableMapping):
++    def __init__(self, size=256):
++        if type(size) is not int or size < 4:
++            raise ValueError("memory size must be at least four bytes")
++        self.data = bytearray(size)
++        self.addresses = set()
++
++    @staticmethod
++    def normalize(value):
++        """Round a stored/forwarded value to IEEE binary32."""
++        value = float(value)
++        try:
++            return struct.unpack("<f", struct.pack("<f", value))[0]
++        except OverflowError:
++            return math.copysign(float("inf"), value)
++
++    def _check(self, address):
++        if type(address) is not int or not 0 <= address <= len(self.data) - 4:
++            raise ValueError(f"memory address must be in 0..{len(self.data) - 4}")
++
++    def __getitem__(self, address):
++        self._check(address)
++        return struct.unpack_from("<f", self.data, address)[0]
++
++    def __setitem__(self, address, value):
++        self._check(address)
++        struct.pack_into("<f", self.data, address, self.normalize(value))
++        self.addresses.add(address)
++
++    def __delitem__(self, address):
++        self._check(address)
++        self.data[address:address + 4] = b"\x00" * 4
++        self.addresses.discard(address)
++
++    def __iter__(self):
++        # Include every nonzero aligned word, even if an unaligned write
++        # changed its bytes, as well as explicitly written address views.
++        words = {a for a in range(0, len(self.data) - 3, 4) if self[a] != 0}
++        return iter(sorted(words | self.addresses))
++
++    def __len__(self):
++        return sum(1 for _ in self)
+--- original/code/print_status.py
++++ Ahmed_Ahmed_Tomasulo/code/print_status.py
+@@ -1,21 +1,32 @@
+-# Qing 
+-# 21st May 2017
++"""Readable timing output. Assignment modifications: Ahmed Ahmed."""
+ 
+-# function: print RS/ROB status
+-def ps(unit):
+-    if(len(unit)==0):
+-        print('empty!')
+-    else:
+-        # get all fields in namedtuple
+-        fields_list = unit[0]._fields
+-        for unit_item in unit:
+-            print ('******')
+-            for field in fields_list:
+-                print(field+': ', str(getattr(unit_item, field)))
+ 
+-# function: print single namedtuple
+-def pss(snt):
+-    fields_list = snt._fields
+-    for field in fields_list:
+-        print (field+': ', str(getattr(snt, field)))
++def interval(start, end):
++    return "-" if start is None else f"{start}-{end if end is not None else '?'}"
+ 
++
++def optional(value):
++    return "-" if value is None else str(value)
++
++
++def format_result(result):
++    lines = ["Tomasulo Simulator | Ahmed Ahmed",
++             f"Issue width {result['config']['issue_width']}; WB width {result['config']['writeback_width']}; "
++             f"commit width {result['config']['commit_width']}",
++             f"{'ID':>3} {'Instruction':<25} {'ISSUE':>5} {'EX':>9} {'MEM':>9} {'WB':>5} {'COMMIT':>6} {'STATUS':<10}"]
++    for row in result["instructions"]:
++        lines.append(f"{row['id']:>3} {row['text']:<25} {row['issue']:>5} "
++                     f"{interval(row['exe_start'],row['exe_end']):>9} "
++                     f"{interval(row['mem_start'],row['mem_end']):>9} "
++                     f"{optional(row['wb']):>5} {optional(row['commit']):>6} {row.get('status', 'committed'):<10}")
++        if row.get("squash_cycle") is not None:
++            lines.append(f"    Squashed in cycle {row['squash_cycle']}: {row.get('squash_reason', 'recovery')}")
++    lines.append(f"Cycles: {result['cycles']} | Instructions: {result['instruction_count']} | IPC: {result['ipc']:.4f}")
++    if "branch_mispredictions" in result:
++        lines.append(f"Branch mispredictions: {len(result['branch_mispredictions'])}; memory replays: {len(result.get('memory_replays', []))}")
++    for prefix in ("R", "F"):
++        lines.append("Registers " + prefix + ": " + ", ".join(
++            f"{prefix}{i}={result['registers'][f'{prefix}{i}']:g}" for i in range(32)))
++    nonzero = ", ".join(f"[{k}]={v:g}" for k,v in result["memory"].items() if v != 0)
++    lines.append("Nonzero memory: " + (nonzero or "(none)"))
++    return "\n".join(lines)
+--- original/code/simulator.py
++++ Ahmed_Ahmed_Tomasulo/code/simulator.py
+@@ -0,0 +1,206 @@
++"""Cycle-accurate educational Tomasulo simulator.
++Starter design: Qing (May 2017). Assignment modifications: Ahmed Ahmed.
++"""
++from collections import deque
++from init import Config, Instruction, Operand, numeric, parse_program, register_name
++from issue import issue
++from exe import exe
++from mem import mem
++from wb import wb
++from commit import commit
++from memory_model import FloatMemory
++
++__author__ = "Ahmed Ahmed"
++
++
++class Simulator:
++    def __init__(self, program, config=None, registers=None, memory=None):
++        self.config = config if config is not None else Config()
++        if isinstance(self.config, dict):
++            self.config = Config.from_dict(self.config)
++        if not isinstance(self.config, Config):
++            raise ValueError("config must be a Config instance or dictionary")
++        self.program = parse_program(program) if isinstance(program, str) else list(program)
++        if any(not isinstance(ins, Instruction) for ins in self.program):
++            raise ValueError("program must contain parsed Instruction objects")
++        self.registers = {f"R{i}": 0 for i in range(32)}
++        self.registers.update({f"F{i}": 0.0 for i in range(32)})
++        initial_regs = {} if registers is None else registers
++        if not isinstance(initial_regs, dict):
++            raise ValueError("registers must be a dictionary")
++        for raw_name, value in initial_regs.items():
++            name = register_name(raw_name)
++            numeric(value, name)
++            if name.startswith("R") and int(value) != value:
++                raise ValueError(f"{name} requires an integer value")
++            self.registers[name] = int(value) if name.startswith("R") else float(value)
++        self.registers["R0"] = 0
++        self.memory = FloatMemory(self.config.memory_size)
++        initial_memory = {} if memory is None else memory
++        if not isinstance(initial_memory, dict):
++            raise ValueError("memory must be a dictionary")
++        for raw_address, value in initial_memory.items():
++            if isinstance(raw_address, str):
++                try:
++                    address = int(raw_address)
++                except ValueError as exc:
++                    raise ValueError("memory addresses must be nonnegative integers") from exc
++            else:
++                address = raw_address
++            if type(address) is not int or not 0 <= address <= self.config.memory_size - 4:
++                raise ValueError(f"memory addresses must be integers from 0 to {self.config.memory_size - 4}")
++            self.memory[address] = numeric(value, f"memory[{address}]")
++        self.rat = {}
++        self.rob = deque()
++        self.lsq = []
++        self.stations = {"int": [], "fp_add": [], "fp_mul": []}
++        self.arithmetic_active, self.address_active, self.memory_active = [], [], []
++        self.results, self.history = [], []
++        self.by_id = {}
++        self.pc, self.next_id, self.cycle = 0, 1, 0
++        self.branch_pending = None
++        # PCs are word indices; the direct-mapped BTB keeps tags to reject aliases.
++        self.predictor = {}
++        self.btb = [None] * 8
++        self.fetch_resume_cycle = 0
++        self.branch_predictions, self.branch_mispredictions, self.memory_replays = [], [], []
++        self.rs_capacity = {"int": self.config.rs_int, "fp_add": self.config.rs_fp_add,
++                            "fp_mul": self.config.rs_fp_mul}
++        self.unit_counts = {"int": self.config.int_units, "fp_add": self.config.fp_add_units,
++                            "fp_mul": self.config.fp_mul_units}
++        self.latencies = {"int": self.config.int_latency, "fp_add": self.config.fp_add_latency,
++                          "fp_mul": self.config.fp_mul_latency, "memory": self.config.addr_latency}
++
++    def read_operand(self, name):
++        if name == "R0":
++            return Operand(0)
++        tag = self.rat.get(name)
++        if tag is None:
++            return Operand(self.registers[name])
++        producer = self.by_id[tag]
++        if producer.wb is not None:
++            return Operand(producer.result, ready_cycle=producer.wb)
++        return Operand(tag=tag)
++
++    def predict_branch(self, entry):
++        """Predict during ISSUE; a taken prediction requires a tagged BTB hit."""
++        index = entry.pc & 7
++        target = self.btb[index]
++        hit = target is not None and target["pc"] == entry.pc
++        taken = bool(self.predictor.get(entry.pc, False) and hit)
++        entry.predicted_taken = taken
++        entry.predicted_next_pc = target["target"] if taken else entry.pc + 1
++        self.branch_predictions.append({
++            "id": entry.id, "pc": entry.pc, "cycle": self.cycle,
++            "btb_index": index, "btb_hit": hit, "predicted_taken": taken,
++            "predicted_next_pc": entry.predicted_next_pc,
++        })
++        return entry.predicted_next_pc
++
++    def squash(self, first_id, target_pc, reason):
++        """Discard a dynamic suffix and reconstruct renaming from surviving ROB entries."""
++        discarded = [entry for entry in self.rob if entry.id >= first_id]
++        ids = {entry.id for entry in discarded}
++        executing = {entry.id for entry in self.arithmetic_active + self.address_active}
++        accessing = {entry.id for entry in self.memory_active}
++        for entry in discarded:
++            entry.status, entry.squashed = "squashed", True
++            entry.squash_cycle, entry.squash_reason = self.cycle, reason
++            # An interrupted operation has a start, but no completed end stage.
++            if entry.id in executing:
++                entry.exe_end = None
++            if entry.id in accessing:
++                entry.mem_end = None
++            for operand in entry.operands:
++                operand.tag = None
++        self.rob = deque(entry for entry in self.rob if entry.id not in ids)
++        self.lsq[:] = [entry for entry in self.lsq if entry.id not in ids]
++        for station in self.stations.values():
++            station[:] = [entry for entry in station if entry.id not in ids]
++        for active in (self.arithmetic_active, self.address_active, self.memory_active, self.results):
++            active[:] = [entry for entry in active if entry.id not in ids]
++        self.rat.clear()
++        for entry in self.rob:
++            destination = entry.instruction.dest
++            if destination is not None and destination != "R0":
++                self.rat[destination] = entry.id
++        self.branch_pending = None
++        self.pc = target_pc
++        # The cycle after detection performs recovery; fetch follows it.
++        self.fetch_resume_cycle = self.cycle + 2
++        return sorted(ids)
++
++    def resolve_branch(self, entry):
++        taken = bool(entry.result)
++        actual_next = entry.instruction.target if taken else entry.pc + 1
++        entry.actual_taken = taken
++        self.predictor[entry.pc] = taken
++        self.btb[entry.pc & 7] = {"pc": entry.pc, "target": entry.instruction.target}
++        if not self.config.branch_prediction:
++            self.pc, self.branch_pending = actual_next, None
++            entry.mispredicted = False
++            return
++        entry.mispredicted = actual_next != entry.predicted_next_pc
++        if entry.mispredicted:
++            discarded = self.squash(entry.id + 1, actual_next,
++                                     f"branch misprediction at instruction {entry.id}")
++            self.branch_mispredictions.append({
++                "id": entry.id, "pc": entry.pc, "cycle": self.cycle,
++                "predicted_next_pc": entry.predicted_next_pc,
++                "actual_next_pc": actual_next, "target": actual_next,
++                "resume_cycle": self.fetch_resume_cycle, "squashed_ids": discarded,
++            })
++
++    def validate_store_address(self, store):
++        """Replay a load if an older, previously unknown store now aliases it."""
++        violating = []
++        for load in self.rob:
++            unresolved = getattr(load, "unresolved_store_ids", [])
++            if store.id not in unresolved:
++                continue
++            unresolved.remove(store.id)
++            # A younger matching forwarding source shadows this store.
++            if (abs(load.address - store.address) < 4
++                    and (load.forwarded_from is None or store.id > load.forwarded_from)):
++                violating.append(load)
++        if violating:
++            load = min(violating, key=lambda entry: entry.id)
++            discarded = self.squash(load.id, load.pc,
++                                     f"memory-order replay after store {store.id}")
++            self.memory_replays.append({
++                "store_id": store.id, "load_id": load.id, "pc": load.pc,
++                "cycle": self.cycle, "target": load.pc,
++                "resume_cycle": self.fetch_resume_cycle, "squashed_ids": discarded,
++            })
++
++    def step(self):
++        if self.cycle >= self.config.max_cycles:
++            raise RuntimeError(f"Simulation exceeded {self.config.max_cycles} cycles; check loop termination")
++        self.cycle += 1
++        # Reverse stage order and explicit readiness dates prevent zero-cycle edges.
++        commit(self)
++        wb(self)
++        mem(self)
++        exe(self)
++        issue(self)
++
++    def run(self):
++        while self.pc < len(self.program) or self.rob:
++            self.step()
++        committed = sum(entry.commit is not None for entry in self.history)
++        squashed = sum(entry.squashed for entry in self.history)
++        return {
++            "author": __author__, "cycles": self.cycle,
++            "instruction_count": committed, "committed_instruction_count": committed,
++            "issued_instruction_count": len(self.history), "squashed_instruction_count": squashed,
++            "ipc": committed / self.cycle if self.cycle else 0.0,
++            "config": self.config.to_dict(),
++            "instructions": [entry.trace() for entry in self.history],
++            "registers": dict(self.registers), "memory": dict(sorted(self.memory.items())),
++            "branch_predictions": list(self.branch_predictions),
++            "branch_mispredictions": list(self.branch_mispredictions),
++            "memory_replays": list(self.memory_replays),
++            "branch_prediction_count": len(self.branch_predictions),
++            "branch_misprediction_count": len(self.branch_mispredictions),
++            "memory_replay_count": len(self.memory_replays),
++        }
+--- original/code/test_case.txt
++++ Ahmed_Ahmed_Tomasulo/code/test_case.txt
+@@ -1,20 +0,0 @@
+-               # of rs         Cycles in EX    Cycles in Mem   # of FUs
+-Integer adder   4               1                               1
+-FP adder        3               4                               1
+-FP multiplier   2               15                              1
+-Load/store unit 5               1               5               1
+-
+-ROB entries = 64
+-R1=12, R2=32, F20=3.0
+-Mem[4]=3.0, Mem[8]=2.0, Mem[12]=1.0, Mem[24]=6.0, Mem[28]=5.0, Mem[32]=4.0
+-
+-Ld F2 0(R1)
+-Mult.d F4 F2 F20
+-Ld F6 0(R2)
+-Add.d F6 F4 F6
+-Sd F6 0(R2)
+-Addi R1 R1 -4
+-Addi R2 R2 -4
+-Bne R1 R0 -12
+-Add.d F20 F2 F2
+-
+--- original/code/wb.py
++++ Ahmed_Ahmed_Tomasulo/code/wb.py
+@@ -1,73 +1,22 @@
+-# Qing 
+-# 29th May 2017 
++"""Bounded CDB broadcast; rename ownership is preserved.
++Starter: Qing (May 2017). Assignment modifications: Ahmed Ahmed.
++"""
+ 
+-'''
+-1. broadcast data on cdb 
+-2. fetch data from results queue 
+-3. remove entry in results queue
+ 
+-'''
+-# function: find ROB entry by tag
+-def find_ROB_entry(ROB, tag):
+-    for index in range(len(ROB)):
+-        if ROB[index].ROB_tag == tag:
+-            break
+-    return index
+-
+-# function: boroadcast
+-# rat_int, rat_fp, reservation stations, ld_sd_queue, ROB
+-def boroadcast(cdb, rat_int, rat_fp, 
+-                rs_int_adder, rs_fp_adder, rs_fp_multi,
+-                ld_sd_queue, ROB, cycle):
+-    # dest_tag
+-    dest_tag = cdb.dest_tag
+-    index = find_ROB_entry(ROB, dest_tag)
+-    reg_tag = ROB[index].dest_tag
+-    # rat_int
+-    if reg_tag[0] == 'R':
+-        rat_int[int(reg_tag[1:])] = cdb.value
+-    # rat_fp
+-    if reg_tag[0] == 'F':
+-        rat_fp[int(reg_tag[1:])] = cdb.value 
+-    # rs list
+-    rs_list = [rs_int_adder, rs_fp_adder, rs_fp_multi]
+-    for rs in rs_list:
+-        for element in rs:
+-            if (element.tag_1st==dest_tag)&(element.valid_1st==0):
+-                element.value_1st = cdb.value
+-                element.valid_1st = 1
+-            if (element.tag_2nd==dest_tag)&(element.valid_2nd==0):
+-                element.value_2nd = cdb.value
+-                element.valid_2nd = 1
+-    # ld_sd_queue 
+-    for element in ld_sd_queue:
+-        if (element.data==dest_tag)&(element.op=='Sd'):
+-            element.data = cdb.value
+-        if (element.reg_tag==dest_tag)&(element.valid==0):
+-            element.reg_value = cdb.value
+-            element.valid = 1
+-    # ROB
+-    for element in ROB:
+-        if element.ROB_tag == dest_tag:
+-            element.value = cdb.value
+-            element.cdb.append(cycle)
+-
+-# function: wb 
+-def wb(cdb, rat_int, rat_fp, 
+-        rs_int_adder, rs_fp_adder, rs_fp_multi,
+-        ld_sd_queue, ROB, cycle,
+-        results_buffer):
+-    # broadcast 
+-    if cdb.valid == 1:
+-        boroadcast(cdb, rat_int, rat_fp, 
+-                    rs_int_adder, rs_fp_adder, rs_fp_multi,
+-                    ld_sd_queue, ROB, cycle)
+-        cdb.valid = 0
+-    # fetch data from results queue
+-    if cdb.valid == 0:
+-        if len(results_buffer)>0:
+-            cdb.valid = 1
+-            cdb.value = results_buffer[0].value
+-            cdb.dest_tag = results_buffer[0].dest_tag
+-            results_buffer.popleft()
+-
++def wb(sim):
++    eligible = sorted((e for e in sim.results if e.complete_cycle < sim.cycle),
++                      key=lambda e: (e.complete_cycle, e.id))
++    for entry in eligible[:sim.config.writeback_width]:
++        entry.wb = sim.cycle
++        entry.status = "writeback"
++        entry.ready_cycle = sim.cycle
++        sim.results.remove(entry)
++        # Broadcast to waiting consumers by producer tag, not by register name.
++        for consumer in sim.rob:
++            for operand in consumer.operands:
++                if operand.tag == entry.id:
++                    operand.value = entry.result
++                    operand.tag = None
++                    operand.ready_cycle = sim.cycle
++        # RAT remains a mapping to the youngest writer until that writer commits.
++        # Architectural register writes belong to commit, not this stage.
+--- original/code.in
++++ Ahmed_Ahmed_Tomasulo/code.in
+@@ -0,0 +1,18 @@
++# Terminating variation of handout example. Only R3 initialization is changed to 20.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           2               1                          1
++FP adder                3               3                          1
++FP multiplier           2              20                          1
++Load/store unit         3               1               4          1
++
++ROB entries = 128
++Issue width = 2
++R1=10, R2=20, R3=20, F2=30.1
++Mem[4]=1, Mem[8]=2, Mem[12]=3.4
++
++Add.d F1, F2, F3
++Ld F4, 8(R1)
++Bne R2, R3, -3
+--- original/data_structure.txt
++++ Ahmed_Ahmed_Tomasulo/data_structure.txt
+@@ -1,26 +1,54 @@
+->> Instruction Buffer --> list
+-Read assembly code in by lines
++Tomasulo simulator state model
++Assignment author: Ahmed Ahmed
++Starter design: Qing (May 2017)
+ 
+->> RATs --> list
+-tag or value
++Config: validated issue/WB/commit widths, capacities, latencies, unit counts,
++        memory size, branch-prediction mode, dispatch order, and cycle limit.
++        Assignment experiments use WB=commit=mem_units=1 and memory_size=256.
++Instruction: immutable opcode, source text, destination, sources, immediate,
++             and resolved static branch target. Numeric offsets are words.
++Operand: value or unique producer tag, plus the cycle the value became ready.
++Entry: unique dynamic ID, static word PC, Instruction, Operand list, stage
++       timestamps, result/address, completion/readiness cycles, and forwarding
++       source. Also holds prediction/outcome, unresolved older-store IDs,
++       committed/squashed status, squash reason/date, and optional staged fault.
+ 
+->> Reservation Station --> list 
+-busy | op | tag_1st | value_1st | valid_1st | tag_2nd | value_2nd | valid_2nd | dest_tag 
++registers: architectural R0..R31 and F0..F31; zero initially unless supplied;
++           only commit writes registers. R0 is immutable.
++FloatMemory: 256-byte bytearray, accessed as little-endian four-byte binary32
++             values. Integer starting byte addresses 0..252 are legal, including
++             unaligned values. Initialized/stored address views and all nonzero
++             aligned words are enumerated for output. Forwarding rounds to the
++             same binary32 format as memory stores.
++rat: architectural destination -> youngest surviving unretired writer's ID.
++rob: deque of live Entry records in dynamic issue order; retirement at head.
++stations: waiting arithmetic entries grouped by int, fp_add, and fp_mul.
++lsq: live pending loads/stores; loads release at MEM completion, stores at commit.
++arithmetic_active: executing integer and FP entries with fixed completion dates;
++                   integer units are unpipelined, FP units are pipelined.
++address_active: nonpipelined load/store address calculations.
++memory_active: nonpipelined RAM accesses or one-cycle forwarded loads.
++results: completed register-producing entries awaiting a CDB broadcast;
++         arbitration sorts by completion cycle, then dynamic ID.
++history: every dynamic Entry, including committed and squashed work, for trace.
++by_id: unique dynamic ID -> Entry for producer lookup; IDs are never reused.
+ 
+->> Functional Unit --> FIFO queue
+-cycle | op | value1 | value2 | dest_tag
++pc: next static word-index instruction selected for issue.
++predictor: static branch PC -> one-bit last outcome, initially not taken.
++btb: eight tagged direct-mapped entries, each holding branch PC and target;
++     index = word PC & 7. A taken prediction needs a matching tag.
++fetch_resume_cycle: recovery gate; detection at n permits issue at n+2.
++branch_pending: used only by the optional no-prediction comparison mode.
++branch_predictions: prediction event log including BTB hit/index and next PC.
++branch_mispredictions: resolution/recovery log including discarded IDs.
++memory_replays: unresolved-store alias recovery log including store/load IDs.
+ 
+->> Ld/Sd --> FIFO queue
+-ldsd_tag | ready | op | address | data | dest_tag | immediate | reg_tag | reg_value | valid
++Recovery removes a suffix from ROB, queues, active execution, and pending CDB
++results; marks corresponding history rows as squashed; clears discarded tags;
++reconstructs RAT from the surviving ROB; and redirects PC after one recovery
++cycle. Wrong-path registers and memory cannot commit. A replay starts at the
++earliest load affected by an older store whose address resolves to overlap.
+ 
+->> ld_sd_exe 
+-busy | cycle | value1 | value2 | dest_tag 
+-
+->> ld_sd_mem 
+-busy | cycle | addr | dest_tag | data | op 
+-
+->> cdb 
+-valid | value | dest_tag
+-
+->> ROB --> FIFO queue
+-ROB_tag | PC | value | dest | issue | exe | mem | cdb | commit 
++run() output: timing rows, full architectural registers, memory address views,
++committed/issued/squashed counts, committed IPC, configuration, and event logs.
++An interrupted EX/MEM interval retains its start but has no completed end.
+--- original/examples/README.md
++++ Ahmed_Ahmed_Tomasulo/examples/README.md
+@@ -0,0 +1,51 @@
++# Experiment inputs
++
++Assignment modifications and additional experiments: **Ahmed Ahmed**.
++
++`sample_case1.in` and `sample_case2.in` reproduce the two instruction lists in
++the supplied sample report exactly. Their JSON files reproduce the hardware
++tables. The sample's load/store unit count is represented by an equal number
++of address-generation units and memory units. Arithmetic pipelines accept one
++new instruction per unit per cycle; each memory unit handles one access at a
++time.
++
++The experiment runner explicitly initializes R1=12, R2=32, F20=3 and all other
++registers to zero. Memory initially contains {4:3, 8:2, 12:1, 24:6, 28:5, 32:4};
++uninitialized memory reads as zero. These details matter: the exact sample
++uses F0, which is zero, and case 1 reads address 20, which is also zero.
++
++`starter_branch.in` preserves the uploaded starter program. A branch target is
++`next_instruction_index + displacement_in_bytes / 4`; its `-12` displacement
++repeats only the pointer-update tail. It executes 15 dynamic instructions and
++stores to address 32 once.
++
++`full_loop.in` is an additional test, with `-32` replacing `-12` to repeat the
++entire loop body three times. This input executes 25 dynamic instructions and
++stores 7, 11, and 15 at addresses 32, 28, and 24. The original input is not
++changed.
++
++`independent_throughput.in` is an additional test of 24 independent integer
++additions with four integer functional units. It exposes bandwidth changes
++without a long dependency chain or memory bottleneck.
++
++From the project root, run:
++
++```bash
++python run_experiments.py
++```
++
++Each of the five inputs runs at issue widths 1, 2, 3, and 4 under two policies:
++
++| Policy | Issue width | Write-back width | Commit width |
++| --- | --- | --- | --- |
++| `scaled` | W | W | W |
++| `fixed_backend` | W | 1 | 1 |
++
++The first policy follows the sample report's multiple-issue, multiple-WB,
++multiple-commit experiment. The second isolates issue-width changes. Each run
++checks the full final architectural register file and memory against
++hand-derived expected values, then writes its complete timing table and state
++to `results/experiment_*.txt` and `results/experiment_*.json`. The summary files
++include cycles, IPC, speedup relative to width 1 within the same policy, and
++observed peak issue/WB/commit counts. Sample reference totals are included only
++for comparison; they do not determine the simulator's output.
+--- original/examples/assignment_demo.in
++++ Ahmed_Ahmed_Tomasulo/examples/assignment_demo.in
+@@ -0,0 +1,18 @@
++# Terminating variation of handout example. Only R3 initialization is changed to 20.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           2               1                          1
++FP adder                3               3                          1
++FP multiplier           2              20                          1
++Load/store unit         3               1               4          1
++
++ROB entries = 128
++Issue width = 2
++R1=10, R2=20, R3=20, F2=30.1
++Mem[4]=1, Mem[8]=2, Mem[12]=3.4
++
++Add.d F1, F2, F3
++Ld F4, 8(R1)
++Bne R2, R3, -3
+--- original/examples/branch_recovery.in
++++ Ahmed_Ahmed_Tomasulo/examples/branch_recovery.in
+@@ -0,0 +1,21 @@
++# Additional predictor test: branch outcomes T,T,N; younger wrong-path work must be squashed.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           4               1                          1
++FP adder                3               4                          1
++FP multiplier           2              15                          1
++Load/store unit         5               1               5          1
++
++ROB entries = 64
++Issue width = 1
++F20=7
++
++Addi R1 R0 3
++Addi R2 R0 0
++Addi R2 R2 4
++Addi R1 R1 -1
++Bne R1 R0 -3
++Addi R3 R0 99
++Sd F20 0(R2)
+--- original/examples/full_loop.in
++++ Ahmed_Ahmed_Tomasulo/examples/full_loop.in
+@@ -0,0 +1,26 @@
++# Additional complete three-iteration loop with -8 word branch offset.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           4               1                          1
++FP adder                3               4                          1
++FP multiplier           2              15                          1
++Load/store unit         5               1               5          1
++
++ROB entries = 64
++Issue width = 1
++R1=12, R2=32, F20=3.0
++Mem[4]=3, Mem[8]=2, Mem[12]=1, Mem[24]=6, Mem[28]=5, Mem[32]=4
++
++# Additional test: byte offset -32 returns from instruction 8 to instruction 1.
++# The supplied starter uses -12, which repeats only the pointer-update tail.
++Ld F2 0(R1)
++Mult.d F4 F2 F20
++Ld F6 0(R2)
++Add.d F6 F4 F6
++Sd F6 0(R2)
++Addi R1 R1 -4
++Addi R2 R2 -4
++Bne R1 R0 -8
++Add.d F20 F2 F2
+--- original/examples/handout_literal.in
++++ Ahmed_Ahmed_Tomasulo/examples/handout_literal.in
+@@ -0,0 +1,18 @@
++# Literal handout example. R3 defaults to zero, so the branch loops forever; use a cycle limit.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           2               1                          1
++FP adder                3               3                          1
++FP multiplier           2              20                          1
++Load/store unit         3               1               4          1
++
++ROB entries = 128
++Issue width = 2
++R1=10, R2=20, F2=30.1
++Mem[4]=1, Mem[8]=2, Mem[12]=3.4
++
++Add.d F1, F2, F3
++Ld F4, 8(R1)
++Bne R2, R3, -3
+--- original/examples/independent_throughput.in
++++ Ahmed_Ahmed_Tomasulo/examples/independent_throughput.in
+@@ -0,0 +1,38 @@
++# Additional 24 independent integer instructions; four unpipelined adders with latency one.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder          32               1                          4
++FP adder                3               3                          1
++FP multiplier           2               5                          1
++Load/store unit         5               1               4          1
++
++ROB entries = 64
++Issue width = 1
++
++# Additional test by Ahmed Ahmed: 24 independent integer additions.
++Addi R3 R0 1
++Addi R4 R0 2
++Addi R5 R0 3
++Addi R6 R0 4
++Addi R7 R0 5
++Addi R8 R0 6
++Addi R9 R0 7
++Addi R10 R0 8
++Addi R11 R0 9
++Addi R12 R0 10
++Addi R13 R0 11
++Addi R14 R0 12
++Addi R15 R0 13
++Addi R16 R0 14
++Addi R17 R0 15
++Addi R18 R0 16
++Addi R19 R0 17
++Addi R20 R0 18
++Addi R21 R0 19
++Addi R22 R0 20
++Addi R23 R0 21
++Addi R24 R0 22
++Addi R25 R0 23
++Addi R26 R0 24
+--- original/examples/integer_unpipelined.in
++++ Ahmed_Ahmed_Tomasulo/examples/integer_unpipelined.in
+@@ -0,0 +1,16 @@
++# Additional nonpipelined integer-unit test: three-cycle latency allows only one operation every three cycles.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           4               3                          1
++FP adder                3               4                          1
++FP multiplier           2              15                          1
++Load/store unit         5               1               5          1
++
++ROB entries = 64
++Issue width = 1
++
++Addi R3 R0 1
++Addi R4 R0 2
++Addi R5 R0 3
+--- original/examples/memory_replay.in
++++ Ahmed_Ahmed_Tomasulo/examples/memory_replay.in
+@@ -0,0 +1,20 @@
++# Additional memory-disambiguation test: a younger load passes an unknown older store address and must replay on alias.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           4               4                          1
++FP adder                3               3                          1
++FP multiplier           2              15                          1
++Load/store unit         4               1               2          1
++
++ROB entries = 64
++Issue width = 1
++R2=16, F20=7
++Mem[16]=1
++
++Addi R1 R0 16
++Sd F20 0(R1)
++Ld F2 0(R2)
++Add.d F4 F2 F2
++Addi R3 R0 99
+--- original/examples/reference/README.txt
++++ Ahmed_Ahmed_Tomasulo/examples/reference/README.txt
+@@ -0,0 +1,4 @@
++Historical sample-report configurations and assembly-only programs from the earlier report.
++They are retained only for comparison and are NOT the assignment execution inputs.
++In particular, old branch displacements were bytes and sample_case2.json had two memory ports.
++Use the combined .in files in the parent examples directory with code/main.py --input.
+--- original/examples/reference/full_loop.asm
++++ Ahmed_Ahmed_Tomasulo/examples/reference/full_loop.asm
+@@ -0,0 +1,11 @@
++# Additional test: byte offset -32 returns from instruction 8 to instruction 1.
++# The supplied starter uses -12, which repeats only the pointer-update tail.
++Ld F2 0(R1)
++Mult.d F4 F2 F20
++Ld F6 0(R2)
++Add.d F6 F4 F6
++Sd F6 0(R2)
++Addi R1 R1 -4
++Addi R2 R2 -4
++Bne R1 R0 -32
++Add.d F20 F2 F2
+--- original/examples/reference/independent_throughput.asm
++++ Ahmed_Ahmed_Tomasulo/examples/reference/independent_throughput.asm
+@@ -0,0 +1,25 @@
++# Additional test by Ahmed Ahmed: 24 independent integer additions.
++Addi R3 R0 1
++Addi R4 R0 2
++Addi R5 R0 3
++Addi R6 R0 4
++Addi R7 R0 5
++Addi R8 R0 6
++Addi R9 R0 7
++Addi R10 R0 8
++Addi R11 R0 9
++Addi R12 R0 10
++Addi R13 R0 11
++Addi R14 R0 12
++Addi R15 R0 13
++Addi R16 R0 14
++Addi R17 R0 15
++Addi R18 R0 16
++Addi R19 R0 17
++Addi R20 R0 18
++Addi R21 R0 19
++Addi R22 R0 20
++Addi R23 R0 21
++Addi R24 R0 22
++Addi R25 R0 23
++Addi R26 R0 24
+--- original/examples/reference/independent_throughput.json
++++ Ahmed_Ahmed_Tomasulo/examples/reference/independent_throughput.json
+@@ -0,0 +1,17 @@
++{
++  "rs_int": 16,
++  "rs_fp_add": 4,
++  "rs_fp_mul": 4,
++  "lsq_size": 4,
++  "rob_size": 64,
++  "int_latency": 1,
++  "fp_add_latency": 3,
++  "fp_mul_latency": 5,
++  "addr_latency": 1,
++  "mem_latency": 5,
++  "int_units": 4,
++  "fp_add_units": 1,
++  "fp_mul_units": 1,
++  "addr_units": 1,
++  "mem_units": 1
++}
+--- original/examples/reference/sample_case1.asm
++++ Ahmed_Ahmed_Tomasulo/examples/reference/sample_case1.asm
+@@ -0,0 +1,17 @@
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
++Addi R1 R1 8
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
++Addi R1 R1 8
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
+--- original/examples/reference/sample_case1.json
++++ Ahmed_Ahmed_Tomasulo/examples/reference/sample_case1.json
+@@ -0,0 +1,17 @@
++{
++  "rs_int": 4,
++  "rs_fp_add": 4,
++  "rs_fp_mul": 4,
++  "lsq_size": 4,
++  "rob_size": 64,
++  "int_latency": 1,
++  "fp_add_latency": 3,
++  "fp_mul_latency": 5,
++  "addr_latency": 1,
++  "mem_latency": 6,
++  "int_units": 1,
++  "fp_add_units": 1,
++  "fp_mul_units": 1,
++  "addr_units": 1,
++  "mem_units": 1
++}
+--- original/examples/reference/sample_case2.asm
++++ Ahmed_Ahmed_Tomasulo/examples/reference/sample_case2.asm
+@@ -0,0 +1,17 @@
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Ld F1 0(R1)
++Addi R1 R1 4
++Add.d F4 F2 F4
++Addi R1 R1 8
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
+--- original/examples/reference/sample_case2.json
++++ Ahmed_Ahmed_Tomasulo/examples/reference/sample_case2.json
+@@ -0,0 +1,17 @@
++{
++  "rs_int": 4,
++  "rs_fp_add": 3,
++  "rs_fp_mul": 2,
++  "lsq_size": 4,
++  "rob_size": 128,
++  "int_latency": 1,
++  "fp_add_latency": 3,
++  "fp_mul_latency": 15,
++  "addr_latency": 1,
++  "mem_latency": 5,
++  "int_units": 1,
++  "fp_add_units": 2,
++  "fp_mul_units": 2,
++  "addr_units": 2,
++  "mem_units": 2
++}
+--- original/examples/reference/starter.json
++++ Ahmed_Ahmed_Tomasulo/examples/reference/starter.json
+@@ -0,0 +1,17 @@
++{
++  "rs_int": 4,
++  "rs_fp_add": 3,
++  "rs_fp_mul": 2,
++  "lsq_size": 5,
++  "rob_size": 64,
++  "int_latency": 1,
++  "fp_add_latency": 4,
++  "fp_mul_latency": 15,
++  "addr_latency": 1,
++  "mem_latency": 5,
++  "int_units": 1,
++  "fp_add_units": 1,
++  "fp_mul_units": 1,
++  "addr_units": 1,
++  "mem_units": 1
++}
+--- original/examples/reference/starter_branch.asm
++++ Ahmed_Ahmed_Tomasulo/examples/reference/starter_branch.asm
+@@ -0,0 +1,9 @@
++Ld F2 0(R1)
++Mult.d F4 F2 F20
++Ld F6 0(R2)
++Add.d F6 F4 F6
++Sd F6 0(R2)
++Addi R1 R1 -4
++Addi R2 R2 -4
++Bne R1 R0 -12
++Add.d F20 F2 F2
+--- original/examples/sample_case1.in
++++ Ahmed_Ahmed_Tomasulo/examples/sample_case1.in
+@@ -0,0 +1,32 @@
++# Sample report case 1 program, with assignment single-CDB backend.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           4               1                          1
++FP adder                4               3                          1
++FP multiplier           4               5                          1
++Load/store unit         4               1               6          1
++
++ROB entries = 64
++Issue width = 1
++R1=12, R2=32, F20=3.0
++Mem[4]=3, Mem[8]=2, Mem[12]=1, Mem[24]=6, Mem[28]=5, Mem[32]=4
++
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
++Addi R1 R1 8
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
++Addi R1 R1 8
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
+--- original/examples/sample_case2.in
++++ Ahmed_Ahmed_Tomasulo/examples/sample_case2.in
+@@ -0,0 +1,32 @@
++# Sample report case 2 adapted to one memory port; two address units and two FP units retained.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           4               1                          1
++FP adder                3               3                          2
++FP multiplier           2              15                          2
++Load/store unit         4               1               5          2
++
++ROB entries = 128
++Issue width = 1
++R1=12, R2=32, F20=3.0
++Mem[4]=3, Mem[8]=2, Mem[12]=1, Mem[24]=6, Mem[28]=5, Mem[32]=4
++
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Ld F1 0(R1)
++Addi R1 R1 4
++Add.d F4 F2 F4
++Addi R1 R1 8
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Ld F1 0(R1)
++Mult.d F2 F1 F0
++Add.d F3 F3 F2
++Mult.d F2 F1 F1
++Add.d F4 F2 F4
+--- original/examples/starter_branch.in
++++ Ahmed_Ahmed_Tomasulo/examples/starter_branch.in
+@@ -0,0 +1,24 @@
++# Starter control flow preserved by converting -12 bytes to -3 words.
++# Author: Ahmed Ahmed
++# Assignment model: one CDB, one memory port, word branch offsets.
++
++# of rs              Cycles in EX    Cycles in Mem    # of FUs
++Integer adder           4               1                          1
++FP adder                3               4                          1
++FP multiplier           2              15                          1
++Load/store unit         5               1               5          1
++
++ROB entries = 64
++Issue width = 1
++R1=12, R2=32, F20=3.0
++Mem[4]=3, Mem[8]=2, Mem[12]=1, Mem[24]=6, Mem[28]=5, Mem[32]=4
++
++Ld F2 0(R1)
++Mult.d F4 F2 F20
++Ld F6 0(R2)
++Add.d F6 F4 F6
++Sd F6 0(R2)
++Addi R1 R1 -4
++Addi R2 R2 -4
++Bne R1 R0 -3
++Add.d F20 F2 F2
+--- original/main.py
++++ Ahmed_Ahmed_Tomasulo/main.py
+@@ -0,0 +1,10 @@
++"""Repository entry point for the Tomasulo simulator. Author: Ahmed Ahmed."""
++from pathlib import Path
++import runpy
++import sys
++
++
++if __name__ == "__main__":
++    code_directory = Path(__file__).resolve().parent / "code"
++    sys.path.insert(0, str(code_directory))
++    runpy.run_path(str(code_directory / "main.py"), run_name="__main__")
+--- original/original/tomasulo-python/README.md
++++ Ahmed_Ahmed_Tomasulo/original/tomasulo-python/README.md
+@@ -0,0 +1,9 @@
++Tomasulo Algorithm Simulation
++* includes instructions of int_add, fp_add, fp_multi, load, store, branch;
++* implements ROB, RAT, load-store-queue;
++* implements out-of-order processing and memory disambiguation; 
++* doesn't include branch prediction.
++
++How to run:
++cd code;
++python main.py
+--- original/original/tomasulo-python/code/code.in
++++ Ahmed_Ahmed_Tomasulo/original/tomasulo-python/code/code.in
+@@ -0,0 +1,9 @@
++Ld F2 0(R1)
++Mult.d F4 F2 F20
++Ld F6 0(R2)
++Add.d F6 F4 F6
++Sd F6 0(R2)
++Addi R1 R1 -4
++Addi R2 R2 -4
++Bne R1 R0 -12
++Add.d F20 F2 F2
+--- original/original/tomasulo-python/code/main.py
++++ Ahmed_Ahmed_Tomasulo/original/tomasulo-python/code/main.py
+@@ -0,0 +1,127 @@
++# Qing 
++# 21st May 2017 
++
++from copy import deepcopy
++from collections import deque, namedtuple
++from init import read_instruction, build_rs, ld_sd_entry, ld_sd_exe, ld_sd_mem, cdb, ROB_entry, PC
++from print_status import ps, pss
++from issue import issue, check_rs_space
++from exe import exe 
++from mem import mem
++from wb import wb 
++from commit import commit
++'''initialize'''
++# read instructions into a list 
++instructions = read_instruction('code.in')
++'''initialize regs, RAT, memory''' 
++# integer REG
++reg_int = []
++for i in range(32):
++    reg_int.extend([0])
++reg_int[1] = 12
++reg_int[2] = 32
++rat_int = deepcopy(reg_int)
++# fp REG
++reg_fp = []
++for i in range(32):
++    reg_fp.extend([0])
++reg_fp[20] = 3.0
++rat_fp = deepcopy(reg_fp)
++# memory 
++memory = []
++for i in range(256):
++    memory.extend([0])
++memory[4] = 3.0
++memory[8] = 2.0
++memory[12] = 1.0
++memory[24] = 6.0
++memory[28] = 5.0
++memory[32] = 4.0
++'''intialize reservation stations'''
++# 2 integer adder rs 
++size_rs_int_adder = 4 
++rs_int_adder = build_rs(size_rs_int_adder)
++# 3 fp adder rs
++size_rs_fp_adder = 3
++rs_fp_adder = build_rs(size_rs_fp_adder)
++# 2 fp multiplier rs
++size_rs_fp_multi = 2
++rs_fp_multi = build_rs(size_rs_fp_multi)
++'''initilize function unit'''
++# 1 cycle in int adder 
++fu_int_adder = deque()
++time_fu_int_adder = 1
++# 3 cycles in fp adder 
++fu_fp_adder = deque()
++time_fu_fp_adder = 4
++# 20 cycles in fp multiplier
++fu_fp_multi = deque()
++time_fu_fp_multi = 15
++'''initialize load/store queue'''
++ld_sd_queue = deque()
++size_ld_sd_queue = 5 
++ld_sd_exe = ld_sd_exe()
++ld_sd_exe.busy = 0
++time_ld_sd_exe = 1
++ld_sd_mem = ld_sd_mem()
++ld_sd_mem.busy = 0
++time_ld_sd_mem = 5
++'''initialize ROB'''
++ROB = deque()
++size_ROB = 64
++'''initialize CDB'''
++results_buffer = deque()
++cdb = cdb()
++cdb.valid = 0
++"""issue first instruction"""
++# instruction pointer 
++PC = PC()
++PC.PC = 0
++PC.valid = 1 
++cycle = 1
++
++# print title 
++item = ''.ljust(30)
++item += 'ISSUE'.ljust(15)
++item += 'EXE'.ljust(15)
++item += 'MEM'.ljust(15)
++item += 'WB'.ljust(15)
++item += 'COMMIT'.ljust(15)
++print (item)
++
++# main
++while (len(ROB)>0)|(cycle==1):
++    
++    '''ISSUE stage'''
++    if (PC.PC<len(instructions))&(PC.valid==1):
++        issue(cycle, PC, instructions, ROB, size_ROB, 
++                rs_int_adder, 
++                rs_fp_adder, 
++                rs_fp_multi, 
++                ld_sd_queue, size_ld_sd_queue, 
++                rat_int, rat_fp)
++
++    '''EXE stage'''
++    exe(fu_int_adder, time_fu_int_adder, 
++        fu_fp_adder, time_fu_fp_adder, 
++        fu_fp_multi, time_fu_fp_multi, results_buffer,  
++        rs_int_adder, rs_fp_adder, rs_fp_multi, 
++        ld_sd_exe, time_ld_sd_exe, ld_sd_queue,
++        cycle, ROB, PC)
++
++    '''MEM stage'''
++    mem(ld_sd_queue, ld_sd_mem, time_ld_sd_mem, results_buffer,
++        memory, ROB, cycle)
++
++    '''CDB stage'''
++    wb(cdb, rat_int, rat_fp, 
++        rs_int_adder, rs_fp_adder, rs_fp_multi,
++        ld_sd_queue, ROB, cycle,
++        results_buffer) 
++    
++    '''COMMIT stage'''
++    commit(ROB, reg_int, reg_fp, cycle, instructions)
++    
++    # cycle number 
++    cycle +=1  
++    
+--- original/original/tomasulo-python/data_structure.txt
++++ Ahmed_Ahmed_Tomasulo/original/tomasulo-python/data_structure.txt
+@@ -0,0 +1,26 @@
++>> Instruction Buffer --> list
++Read assembly code in by lines
++
++>> RATs --> list
++tag or value
++
++>> Reservation Station --> list 
++busy | op | tag_1st | value_1st | valid_1st | tag_2nd | value_2nd | valid_2nd | dest_tag 
++
++>> Functional Unit --> FIFO queue
++cycle | op | value1 | value2 | dest_tag
++
++>> Ld/Sd --> FIFO queue
++ldsd_tag | ready | op | address | data | dest_tag | immediate | reg_tag | reg_value | valid
++
++>> ld_sd_exe 
++busy | cycle | value1 | value2 | dest_tag 
++
++>> ld_sd_mem 
++busy | cycle | addr | dest_tag | data | op 
++
++>> cdb 
++valid | value | dest_tag
++
++>> ROB --> FIFO queue
++ROB_tag | PC | value | dest | issue | exe | mem | cdb | commit 
+--- original/run_experiments.py
++++ Ahmed_Ahmed_Tomasulo/run_experiments.py
+@@ -0,0 +1,221 @@
++#!/usr/bin/env python3
++"""Reproduce assignment-compliant issue-width experiments. Author: Ahmed Ahmed.
++
++The main profile always has one CDB, one commit per cycle, and one memory port.
++All inputs combine hardware, initial registers/memory, and assembly in one file.
++An independent sequential byte-memory interpreter checks architectural results.
++"""
++from __future__ import annotations
++import argparse
++from collections import Counter
++import csv
++from dataclasses import replace
++import json
++import math
++from pathlib import Path
++import re
++import struct
++import sys
++
++ROOT = Path(__file__).resolve().parent
++sys.path.insert(0, str(ROOT / 'code'))
++from init import parse_input
++from simulator import Simulator
++
++AUTHOR = 'Ahmed Ahmed'
++CASES = {
++    'sample_case1': {
++        'title': 'Sample case 1 under assignment hardware rules',
++        'instructions': 17,
++        'explanation': 'The program and arithmetic hardware match sample case 1. One CDB and one commit per cycle are retained at every issue width. Loads read 12, 20, and 28: 1, 0, and 5. Final F4=1^2+0^2+5^2=26; R1=28.'},
++    'sample_case2': {
++        'title': 'Sample case 2 adapted to one memory port',
++        'instructions': 17,
++        'explanation': 'The sample program, two FP adders, two FP multipliers, and two address units are retained. The assignment requires one memory port, so the sample report\'s two memory units are reduced to one. Final F4=1^2+6^2=37; R1=24. One CDB is retained.'},
++    'starter_branch': {
++        'title': 'Starter branch control flow with word offset',
++        'instructions': 15,
++        'explanation': 'The starter\'s -12-byte displacement is converted to -3 words. At PC7 the target is PC5, so only pointer updates and the branch repeat. Mem[32]=7, F20=2, R1=0, R2=20.'},
++    'full_loop': {
++        'title': 'Additional complete three-iteration loop',
++        'instructions': 25,
++        'explanation': 'The separately named full loop uses -8 words from PC7 to PC0. Final stores are Mem[32]=7, Mem[28]=11, Mem[24]=15; F20=6, R1=0, R2=20.'},
++    'independent_throughput': {
++        'title': 'Additional independent integer throughput test',
++        'instructions': 24,
++        'explanation': 'Twenty-four independent Addi instructions write R3 through R26 with 1 through 24. Four unpipelined one-cycle integer units allow concurrent execution, but one CDB and one commit slot limit overall throughput.'},
++    'assignment_demo': {
++        'title': 'Terminating variation of the handout example',
++        'instructions': 3,
++        'explanation': 'Only the handout\'s initial R3 is changed from its default zero to 20, equal to R2. The branch is not taken. F1=30.1, F4=0 because the unaligned load reads four zero bytes beginning at byte address 18.'},
++    'branch_recovery': {
++        'title': 'Additional one-bit branch recovery test',
++        'instructions': 13,
++        'explanation': 'The same branch produces T, T, N. The one-bit predictor learns taken and must recover on the first taken and final not-taken outcomes. Wrong-path instructions cannot alter architectural state. Final R1=0, R2=12, R3=99, Mem[12]=7.'},
++    'memory_replay': {
++        'title': 'Additional unknown-store-address replay test',
++        'instructions': 5,
++        'explanation': 'A younger load reads address 16 before an older store resolves its address. Discovering the alias triggers replay. The corrected load gets 7, not the stale 1; final F2=7, F4=14, R3=99, Mem[16]=7.'},
++    'integer_unpipelined': {
++        'title': 'Additional three-cycle integer-unit test',
++        'instructions': 3,
++        'explanation': 'Three independent Addi operations share one three-cycle unpipelined integer unit. Their EX intervals must not overlap; final R3=1,R4=2,R5=3.'},
++}
++
++
++def assembly_lines(text):
++    """Extract this benchmark suite's numeric-offset assembly independently."""
++    lines=[]
++    for raw in text.splitlines():
++        clean=re.split(r'[#;]',raw,maxsplit=1)[0].strip()
++        if re.match(r'^(Add(?:\.d|i)?|Sub(?:\.d)?|Mult\.d|Ld|Sd|Bne|Beq)\s',clean,re.I):
++            lines.append(clean)
++    return lines
++
++
++def sequential_reference(lines, initial_registers, initial_memory, memory_size=256):
++    """Independent ISA oracle with real bytes and little-endian binary32 memory.
++
++    It shares no decoder, scheduler, ROB, RAT, or memory implementation with the
++    simulator. The benchmark suite uses numeric word branch offsets.
++    """
++    registers={f'{prefix}{i}':0 for prefix in ('R','F') for i in range(32)}
++    registers.update(initial_registers)
++    registers['R0']=0
++    storage=bytearray(memory_size)
++    written=set()
++    def store(address,value):
++        assert 0 <= address <= memory_size-4
++        struct.pack_into('<f',storage,address,float(value))
++        written.add(address)
++    for address,value in initial_memory.items():store(address,value)
++    pc=0;committed=0
++    while pc<len(lines):
++        if committed>=10000:raise RuntimeError('Sequential reference reached the loop guard')
++        tokens=lines[pc].replace(',',' ').split()
++        op=tokens[0].lower();destination=tokens[1].upper();next_pc=pc+1
++        if op in ('ld','sd'):
++            match=re.fullmatch(r'([+-]?\d+)\((R\d+)\)',tokens[2],re.I)
++            offset,base=match.groups();address=int(registers[base.upper()])+int(offset)
++            assert 0<=address<=memory_size-4
++            if op=='ld':registers[destination]=struct.unpack_from('<f',storage,address)[0]
++            else:store(address,registers[destination])
++        elif op in ('beq','bne'):
++            equal=registers[destination]==registers[tokens[2].upper()]
++            if equal==(op=='beq'):next_pc=pc+1+int(tokens[3])
++        else:
++            left=registers[tokens[2].upper()]
++            right=int(tokens[3]) if op=='addi' else registers[tokens[3].upper()]
++            value=left*right if op=='mult.d' else left-right if op in ('sub','sub.d') else left+right
++            if destination!='R0':registers[destination]=value
++        registers['R0']=0
++        committed+=1;pc=next_pc
++    views=written|{a for a in range(0,memory_size-3,4) if struct.unpack_from('<f',storage,a)[0]!=0}
++    memory={a:struct.unpack_from('<f',storage,a)[0] for a in sorted(views)}
++    return registers,memory,committed
++
++
++def verify_state(case,result,expected):
++    registers,memory,count=expected
++    assert count==case['instructions'],(case['title'],'hand-derived instruction count',count)
++    assert result['committed_instruction_count']==count,(case['title'],'committed count')
++    for key,value in registers.items():
++        assert math.isclose(result['registers'][key],value,rel_tol=1e-12,abs_tol=1e-12),(case['title'],key,result['registers'][key],value)
++    actual={int(k):v for k,v in result['memory'].items()}
++    for key in actual.keys()|memory.keys():
++        assert actual.get(key,0)==memory.get(key,0),(case['title'],'memory',key,actual.get(key,0),memory.get(key,0))
++    assert all(row['commit'] is not None or row['squashed'] for row in result['instructions'])
++
++
++def peak(result,stage):
++    return max(Counter(row[stage] for row in result['instructions'] if row[stage] is not None).values(),default=0)
++
++
++def interval(row,kind):
++    begin,end=row[kind+'_start'],row[kind+'_end']
++    return '-' if begin is None else f'{begin}-{end if end is not None else "?"}'
++
++
++def render_text(case,result,width):
++    lines=[case['title'],f'Author: {AUTHOR}',f'Issue width: {width}; CDB/WB=1; commit=1; memory ports=1',
++           'Configuration: '+json.dumps(result['config'],sort_keys=True),'',
++           f'{"ID":>3} {"PC":>3} {"Instruction":<24} {"ISSUE":>5} {"EXE":>9} {"MEM":>9} {"WB":>5} {"COMMIT":>6} STATUS']
++    for row in result['instructions']:
++        lines.append(f'{row["id"]:>3} {row["pc"]:>3} {row["text"]:<24} {row["issue"]:>5} {interval(row,"exe"):>9} {interval(row,"mem"):>9} {str(row["wb"]) if row["wb"] is not None else "-":>5} {str(row["commit"]) if row["commit"] is not None else "-":>6} {row["status"]}')
++    lines.extend(['',f'Cycles: {result["cycles"]}',f'Committed: {result["committed_instruction_count"]}; issued: {result["issued_instruction_count"]}; squashed: {result["squashed_instruction_count"]}',
++                  f'IPC: {result["ipc"]:.6f}',f'Branch mispredictions: {result["branch_misprediction_count"]}; memory replays: {result["memory_replay_count"]}',
++                  'Independent sequential final-state check: PASS',case['explanation'],'','REGISTER VALUES'])
++    for prefix in ('R','F'):
++        lines.append(' '.join(f'{prefix}{i}={result["registers"][prefix+str(i)]}' for i in range(32)))
++    lines.append('NON-ZERO MEMORY VALUES')
++    lines.extend(f'{address}: {value}' for address,value in sorted((int(k),v) for k,v in result['memory'].items()) if value!=0)
++    lines.append('RECOVERY EVENTS')
++    lines.extend(json.dumps(event,sort_keys=True) for event in result['branch_mispredictions']+result['memory_replays'])
++    return '\n'.join(lines)+'\n'
++
++
++def main():
++    parser=argparse.ArgumentParser(description=__doc__)
++    parser.add_argument('--output-dir',type=Path,default=ROOT/'results')
++    args=parser.parse_args();args.output_dir.mkdir(parents=True,exist_ok=True)
++    summaries=[]
++    for name,case in CASES.items():
++        text=(ROOT/'examples'/f'{name}.in').read_text()
++        program,base,registers,memory=parse_input(text)
++        expected=sequential_reference(assembly_lines(text),registers,memory,base.memory_size)
++        baseline=None
++        for width in range(1,5):
++            config=replace(base,issue_width=width,writeback_width=1,commit_width=1,mem_units=1,branch_prediction=True)
++            result=Simulator(program,config,registers,memory).run()
++            verify_state(case,result,expected)
++            assert peak(result,'issue') <= width
++            assert peak(result,'wb') <= 1 and peak(result,'commit') <= 1
++            if name=='branch_recovery':assert result['branch_misprediction_count']==2
++            if name=='memory_replay':assert result['memory_replay_count']>=1
++            if name=='integer_unpipelined':
++                rows=result['instructions']
++                assert all(a['exe_end'] < b['exe_start'] for a,b in zip(rows,rows[1:]))
++            baseline=baseline or result['cycles']
++            summary={
++                'case':name,'title':case['title'],'policy':'assignment','issue_width':width,
++                'writeback_width':1,'commit_width':1,'memory_ports':1,
++                'cycles':result['cycles'],'instructions':result['committed_instruction_count'],
++                'issued':result['issued_instruction_count'],'squashed':result['squashed_instruction_count'],
++                'ipc':round(result['ipc'],6),'speedup':round(baseline/result['cycles'],6),
++                'peak_issue':peak(result,'issue'),'peak_wb':peak(result,'wb'),'peak_commit':peak(result,'commit'),
++                'branch_mispredictions':result['branch_misprediction_count'],'memory_replays':result['memory_replay_count'],
++                'state_check':'PASS',
++            }
++            summaries.append(summary)
++            result['experiment']={**summary,'author':AUTHOR,'expected_state_explanation':case['explanation']}
++            expected_registers,expected_memory,expected_count=expected
++            result['reference']={
++                'method':'Independent sequential assembly interpreter with little-endian binary32 byte memory',
++                'check':'PASS','committed_instruction_count':expected_count,
++                'registers':expected_registers,'memory':expected_memory,
++            }
++            stem=f'experiment_{name}_assignment_w{width}'
++            (args.output_dir/f'{stem}.json').write_text(json.dumps(result,indent=2,sort_keys=True)+'\n')
++            (args.output_dir/f'{stem}.txt').write_text(render_text(case,result,width))
++            print(f'{name:24} W={width} cycles={result["cycles"]:3} committed={result["committed_instruction_count"]:2} squashed={result["squashed_instruction_count"]:2} mispred={result["branch_misprediction_count"]} replay={result["memory_replay_count"]} PASS')
++    bounded=[]
++    program,base,registers,memory=parse_input((ROOT/'examples/handout_literal.in').read_text())
++    for width in range(1,5):
++        simulator=Simulator(program,replace(base,issue_width=width,max_cycles=200),registers,memory)
++        try:simulator.run()
++        except RuntimeError as error:
++            assert '200 cycles' in str(error)
++            bounded.append({'case':'handout_literal','issue_width':width,'max_cycles':200,'status':'EXPECTED_CYCLE_LIMIT','reason':'R2 remains 20 and R3 remains 0; Bne -3 always branches to PC0.'})
++        else:raise AssertionError('The literal handout program unexpectedly terminated')
++    (args.output_dir/'handout_literal_checks.json').write_text(json.dumps(bounded,indent=2)+'\n')
++    (args.output_dir/'experiment_summary.json').write_text(json.dumps({
++        'author':AUTHOR,'policy':'Assignment primary profile: only issue width changes; one CDB, one commit, one nonpipelined memory port.',
++        'source_note':'Actual assignment handout controls behavior. The sample report supplies program ideas and formatting, not a correctness oracle.',
++        'sample_case2_adaptation':'Retain two FP adders, two FP multipliers, and two address units; use one memory port per the assignment.',
++        'experiments':summaries,'literal_handout_checks':bounded},indent=2)+'\n')
++    with (args.output_dir/'experiment_summary.csv').open('w',newline='') as file:
++        writer=csv.DictWriter(file,fieldnames=list(summaries[0]));writer.writeheader();writer.writerows(summaries)
++    print(f'PASS: {len(summaries)} terminating experiments and {len(bounded)} expected literal-input cycle-limit checks.')
++
++
++if __name__=='__main__':main()
+--- original/tests/stress_equivalence.py
++++ Ahmed_Ahmed_Tomasulo/tests/stress_equivalence.py
+@@ -0,0 +1,63 @@
++"""Independent architectural execution versus speculative scheduling.
++
++Author: Ahmed Ahmed. Run directly with ``python tests/stress_equivalence.py``.
++The oracle shares only parsed instruction objects, not scheduler, stage, or
++memory-model helpers. It compares registers and all 256 underlying bytes.
++"""
++import random
++import struct
++import sys
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "code"))
++from simulator import Simulator
++from init import Config, parse_program
++
++def sequential(program, regs, memory):
++    r = {**{f'R{i}':0 for i in range(32)}, **{f'F{i}':0.0 for i in range(32)}, **regs}
++    m = bytearray(256)
++    for a,v in memory.items(): struct.pack_into('<f', m, a, v)
++    pc=0
++    while pc < len(program):
++        ins=program[pc]; op=ins.op; n=pc+1
++        if op in ('Ld','Sd'):
++            a=r[ins.sources[0]]+ins.immediate
++            if op=='Ld': value=struct.unpack_from('<f',m,a)[0]
++            else: struct.pack_into('<f',m,a,r[ins.sources[1]])
++        elif ins.branch:
++            yes=r[ins.sources[0]]==r[ins.sources[1]]
++            if yes == (op=='Beq'): n=ins.target
++        else:
++            a=r[ins.sources[0]];b=ins.immediate if op=='Addi' else r[ins.sources[1]]
++            value=a+b if op in ('Add','Addi','Add.d') else a-b if op in ('Sub','Sub.d') else a*b
++        if ins.dest and ins.dest!='R0': r[ins.dest]=value
++        pc=n
++    return r,m
++
++total=0
++for seed in range(100):
++    rand=random.Random(seed)
++    regs={**{f'R{i}':rand.randint(0,16) for i in range(1,5)},**{f'F{i}':rand.randint(-3,3)/3 for i in range(1,6)}}
++    memory={a:rand.randint(-3,3)/3 for a in range(0,64,4)}
++    lines=[]
++    for i in range(45):
++        op=rand.choice(['Addi','Add','Sub','Add.d','Sub.d','Mult.d','Ld','Sd','Beq','Bne'])
++        if op in ('Ld','Sd'):
++            # R6 is always an address set by Addi; delay that producer periodically.
++            if rand.random()<.25: lines.append(f'Addi R6,R0,{rand.randint(0,8)}')
++            lines.append(f'{op} F{rand.randint(1,5)},{rand.randint(0,40)}(R6)')
++        elif op in ('Beq','Bne'): lines.append(f'{op} R{rand.randint(0,4)},R{rand.randint(0,4)},1')
++        elif op=='Addi':lines.append(f'Addi R{rand.randint(0,4)},R{rand.randint(0,4)},{rand.randint(-3,3)}')
++        else:
++            prefix='F' if '.d' in op else 'R'
++            lines.append(f'{op} {prefix}{rand.randint(1,4)},{prefix}{rand.randint(1,4)},{prefix}{rand.randint(1,4)}')
++    lines.append('Addi R0,R0,0')
++    p=parse_program('\n'.join(lines)); expected,mem=sequential(p,regs,memory)
++    for width in range(1,5):
++        c=Config(issue_width=width,int_latency=rand.randint(1,4),fp_add_latency=rand.randint(1,5),fp_mul_latency=rand.randint(2,7),mem_latency=rand.randint(1,5),rs_int=5,lsq_size=8,addr_units=rand.randint(1,2))
++        s=Simulator(p,c,regs,memory); result=s.run()
++        assert s.registers==expected,(seed,width,'regs',[(k,v,expected[k])for k,v in s.registers.items()if v!=expected[k]],'\n'.join(lines))
++        assert s.memory.data==mem,(seed,width,'memory')
++        assert all(e.commit is None for e in s.history if e.squashed)
++        total+=1
++print(f'{total} independent sequential-equivalence runs passed (100 random programs x four issue widths).')
+--- original/tests/test_assignment.py
++++ Ahmed_Ahmed_Tomasulo/tests/test_assignment.py
+@@ -0,0 +1,301 @@
++"""Tests derived directly from the supplied assignment handout.
++
++Assignment author: Ahmed Ahmed.
++Expected branch paths, values, resource occupancy and recovery cycles are
++calculated independently of the scheduler implementation.
++"""
++import collections
++import subprocess
++import struct
++import sys
++import tempfile
++import unittest
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "code"))
++from init import Config, parse_input, parse_program
++from simulator import Simulator
++from test_simulator import simulate
++
++
++HANDOUT_INPUT = """# of rs Cycles in EX Cycles in Mem # of FUs
++Integer adder 2 1 1
++FP adder 3 3 1
++FP multiplier 2 20 1
++Load/store unit 3 1 4 1
++ROB entries =128
++Issue width=2
++R1=10,R2=20,F2=30.1
++Mem[4]=1,Mem[8]=2,Mem[12]=3.4
++Add.d F1,F2,F3
++Ld F4,8(R1)
++Bne R2,R3,-3
++"""
++
++
++def committed(result):
++    return [row for row in result["instructions"] if row["commit"] is not None]
++
++
++class HandoutInputTests(unittest.TestCase):
++    def test_exact_handout_input_parses_in_one_file(self):
++        program, config, registers, memory = parse_input(HANDOUT_INPUT)
++        self.assertEqual(len(program), 3)
++        self.assertEqual((config.rs_int, config.int_latency, config.int_units), (2, 1, 1))
++        self.assertEqual((config.rs_fp_add, config.fp_add_latency, config.fp_add_units), (3, 3, 1))
++        self.assertEqual((config.rs_fp_mul, config.fp_mul_latency, config.fp_mul_units), (2, 20, 1))
++        self.assertEqual((config.lsq_size, config.addr_latency, config.mem_latency, config.addr_units), (3, 1, 4, 1))
++        self.assertEqual((config.rob_size, config.issue_width), (128, 2))
++        self.assertEqual((config.writeback_width, config.mem_units), (1, 1))
++        self.assertEqual(registers, {"R1": 10, "R2": 20, "F2": 30.1})
++        self.assertEqual(memory, {4: 1, 8: 2, 12: 3.4})
++        self.assertEqual(program[2].target, 0)
++
++    def test_whole_input_and_labels_are_case_insensitive(self):
++        first = parse_input(HANDOUT_INPUT)
++        second = parse_input(HANDOUT_INPUT.lower())
++        self.assertEqual(first[1:], second[1:])
++        self.assertEqual([(i.op, i.dest, i.sources, i.target) for i in first[0]],
++                         [(i.op, i.dest, i.sources, i.target) for i in second[0]])
++        result = simulate("Addi R1 R0 2\nLoop: Addi R1 R1 -1\nBne R1 R0 LOOP")
++        self.assertEqual(result["registers"]["R1"], 0)
++
++    def test_default_width_and_architectural_state_are_zero(self):
++        program, config, registers, memory = parse_input("Add R1,R2,R3")
++        self.assertEqual(config.issue_width, 1)
++        self.assertEqual(registers, {})
++        self.assertEqual(memory, {})
++        result = Simulator(program, config).run()
++        self.assertEqual(len(result["registers"]), 64)
++        self.assertTrue(all(value == 0 for value in result["registers"].values()))
++        self.assertTrue(all(value == 0 for value in result["memory"].values()))
++
++    def test_handout_example_loop_is_guarded_not_falsely_reported_complete(self):
++        program, config, registers, memory = parse_input(HANDOUT_INPUT)
++        config.max_cycles = 100
++        with self.assertRaisesRegex(RuntimeError, "100|termination"):
++            Simulator(program, config, registers, memory).run()
++
++    def test_omitted_registers_stay_zero_with_partial_initialization(self):
++        program, config, registers, memory = parse_input("R1=7\nF2=2.5\nAdd.d F3,F2,F0\nAdd R4,R1,R2")
++        result = Simulator(program, config, registers, memory).run()
++        self.assertEqual((result["registers"]["R4"], result["registers"]["F3"]), (7, 2.5))
++        self.assertEqual(result["registers"]["F20"], 0)
++
++    def test_invalid_single_file_values_fail_explicitly(self):
++        inputs = ["Issue width=5", "ROB entries=0", "Integer adder 0 1 1", "R32=1", "R2=1.5",
++                  "F2=nan", "Mem[-1]=2", "Mem[253]=2", "Mem[256]=2"]
++        for text in inputs:
++            with self.subTest(text=text), self.assertRaises((ValueError, TypeError)):
++                parse_input(text)
++
++    def test_cli_accepts_one_file_and_emits_required_output(self):
++        root = Path(__file__).resolve().parents[1]
++        with tempfile.TemporaryDirectory() as directory:
++            input_file = Path(directory) / "case.in"
++            input_file.write_text("Issue width=2\nR1=4\nMem[4]=2.5\nLd F1,0(R1)\nAdd.d F2,F1,F1\n", encoding="utf-8")
++            run = subprocess.run([sys.executable, str(root / "code" / "main.py"), "--input", str(input_file)],
++                                 capture_output=True, text=True, timeout=20)
++        self.assertEqual(run.returncode, 0, run.stderr)
++        for word in ("ISSUE", "EX", "MEM", "WB", "COMMIT", "REGISTER", "MEMORY", "Ahmed Ahmed"):
++            self.assertIn(word.upper(), run.stdout.upper())
++
++
++class HardwareContractTests(unittest.TestCase):
++    def test_integer_unit_cannot_overlap_multicycle_operations(self):
++        result = simulate("\n".join(f"Addi R{i} R0 {i}" for i in range(1, 5)),
++                          issue_width=4, int_latency=3, int_units=1)
++        rows = committed(result)
++        self.assertEqual([r["exe_start"] for r in rows], [2, 5, 8, 11])
++        self.assertEqual([r["exe_end"] for r in rows], [4, 7, 10, 13])
++
++    def test_parameterized_integer_units_each_remain_unpipelined(self):
++        result = simulate("\n".join(f"Addi R{i} R0 {i}" for i in range(1, 7)),
++                          issue_width=4, int_latency=3, int_units=2, rs_int=8)
++        rows = committed(result)
++        for cycle in range(1, result["cycles"] + 1):
++            self.assertLessEqual(sum(r["exe_start"] <= cycle <= r["exe_end"] for r in rows), 2)
++        self.assertEqual([r["exe_start"] for r in rows], [2, 2, 5, 5, 8, 8])
++
++    def test_address_adder_does_not_occupy_integer_unit(self):
++        result = simulate("Addi R1 R0 8\nLd F1 12(R0)", issue_width=2, int_latency=6, memory={12: 7})
++        rows = committed(result)
++        self.assertEqual((rows[0]["exe_start"], rows[1]["exe_start"]), (2, 2))
++        self.assertEqual(result["registers"]["F1"], 7)
++
++    def test_primary_profile_has_one_cdb_and_one_nonpipelined_memory_port(self):
++        result = simulate("Ld F1 0(R0)\nLd F2 4(R0)\nAdd.d F3 F0 F0\nAddi R1 R0 1",
++                          issue_width=4, addr_units=2, mem_latency=4)
++        rows = committed(result)
++        self.assertGreater(rows[1]["mem_start"], rows[0]["mem_end"])
++        self.assertTrue(all(count <= 1 for count in collections.Counter(r["wb"] for r in rows if r["wb"] is not None).values()))
++
++    def test_load_releases_lsq_at_mem_completion_before_writeback(self):
++        result = simulate("Ld F1 0(R0)\nLd F2 4(R0)", issue_width=4, lsq_size=1, mem_latency=2)
++        first, second = committed(result)
++        self.assertEqual(second["issue"], first["mem_end"])
++        self.assertLess(second["issue"], first["wb"])
++
++    def test_store_memory_changes_only_at_commit_and_lsq_releases_then(self):
++        sim = Simulator(parse_program("Sd F1 4(R0)"), Config(mem_latency=4), {"F1": 7}, {4: 2})
++        while not sim.history or sim.history[0].commit is None:
++            old_commit = sim.history[0].commit if sim.history else None
++            sim.step()
++            entry = sim.history[0]
++            if entry.commit is None:
++                self.assertEqual(sim.memory[4], 2)
++                self.assertIn(entry, sim.lsq)
++            else:
++                self.assertIsNone(old_commit)
++                self.assertEqual(sim.memory[4], 7)
++                self.assertNotIn(entry, sim.lsq)
++
++    def test_memory_accepts_last_four_byte_value_and_example_unaligned_address(self):
++        result = simulate("Ld F1 252(R0)\nLd F2 8(R1)", registers={"R1": 10}, memory={252: 2.5, 18: 7.5})
++        self.assertEqual((result["registers"]["F1"], result["registers"]["F2"]), (2.5, 7.5))
++
++    def test_memory_load_and_store_use_single_precision_rounding(self):
++        rounded = struct.unpack("<f", struct.pack("<f", 0.1))[0]
++        result = simulate("Ld F1 0(R0)\nSd F2 8(R0)\nLd F3 8(R0)", issue_width=3,
++                          registers={"F2": 0.1}, memory={0: 0.1})
++        self.assertEqual((result["registers"]["F1"], result["registers"]["F3"]), (rounded, rounded))
++        self.assertEqual(result["memory"][8], rounded)
++
++    def test_unaligned_store_overlaps_underlying_bytes(self):
++        expected = bytearray(8)
++        struct.pack_into("<f", expected, 0, 1.0)
++        struct.pack_into("<f", expected, 4, 2.0)
++        struct.pack_into("<f", expected, 2, 3.5)
++        result = simulate("Sd F1 2(R0)\nLd F2 0(R0)\nLd F3 4(R0)\nLd F4 2(R0)",
++                          issue_width=4, registers={"F1": 3.5}, memory={0: 1.0, 4: 2.0})
++        self.assertEqual(result["registers"]["F2"], struct.unpack_from("<f", expected, 0)[0])
++        self.assertEqual(result["registers"]["F3"], struct.unpack_from("<f", expected, 4)[0])
++        self.assertEqual(result["registers"]["F4"], 3.5)
++
++    def test_memory_rejects_out_of_range_initial_and_effective_addresses(self):
++        for address in (-1, 253, 256):
++            with self.subTest(address=address), self.assertRaises(ValueError):
++                simulate("", memory={address: 1})
++            with self.subTest(effective=address), self.assertRaises(ValueError):
++                simulate(f"Ld F1 {address}(R0)")
++
++
++class SpeculationContractTests(unittest.TestCase):
++    def test_misprediction_resumes_exactly_two_cycles_after_resolution(self):
++        for width in range(1, 5):
++            with self.subTest(width=width):
++                result = simulate("Beq R0 R0 1\nAddi R1 R0 99\nAddi R2 R0 7", issue_width=width)
++                branch, target = committed(result)
++                event = result["branch_mispredictions"][0]
++                self.assertEqual(event["cycle"], branch["exe_end"])
++                self.assertEqual(event["resume_cycle"], branch["exe_end"] + 2)
++                self.assertEqual(target["issue"], branch["exe_end"] + 2)
++                self.assertEqual(result["registers"]["R1"], 0)
++
++    def test_correct_not_taken_prediction_has_no_recovery_bubble(self):
++        result = simulate("Bne R0 R0 1\nAddi R1 R0 7\nAddi R2 R0 8", issue_width=4)
++        rows = committed(result)
++        self.assertEqual([r["issue"] for r in rows], [1, 1, 1])
++        self.assertEqual(result["branch_mispredictions"], [])
++        self.assertFalse(result["branch_predictions"][0]["predicted_taken"])
++
++    def test_one_bit_predictor_learns_taken_then_mispredicts_loop_exit(self):
++        sim = Simulator(parse_program("Addi R1 R1 -1\nBne R1 R0 -2"), Config(issue_width=4), {"R1": 3}, {})
++        result = sim.run()
++        branches = [r for r in committed(result) if r["pc"] == 1]
++        predictions = {p["id"]: p for p in result["branch_predictions"]}
++        self.assertEqual([r["actual_taken"] for r in branches], [True, True, False])
++        self.assertEqual([predictions[r["id"]]["predicted_taken"] for r in branches], [False, True, True])
++        self.assertEqual(sum(r["mispredicted"] for r in branches), 2)
++        self.assertFalse(sim.predictor[1])
++        self.assertEqual(result["registers"]["R1"], 0)
++        self.assertEqual(result["instruction_count"], 6)
++
++    def test_btb_word_pc_low_three_bits_and_tags_handle_aliasing_branches(self):
++        program = ["Beq R0 R0 6"] + [f"Addi R{i} R0 99" for i in range(2, 8)]
++        program += ["Addi R1 R1 -1", "Bne R1 R0 -9"]
++        sim = Simulator(parse_program("\n".join(program)), Config(issue_width=4), {"R1": 3}, {})
++        result = sim.run()
++        branches = [r for r in committed(result) if r["pc"] in (0, 8)]
++        predictions = {p["id"]: p for p in result["branch_predictions"]}
++        self.assertEqual([r["pc"] for r in branches], [0, 8] * 3)
++        self.assertTrue(all(predictions[r["id"]]["btb_index"] == 0 for r in branches))
++        self.assertEqual(len(sim.btb), 8)
++        self.assertTrue(sim.predictor[0])
++        self.assertFalse(sim.predictor[8])
++        self.assertEqual(result["registers"]["R1"], 0)
++        self.assertTrue(all(result["registers"][f"R{i}"] == 0 for i in range(2, 8)))
++
++    def test_recovery_restores_surviving_older_rename_and_clears_wrong_path_tags(self):
++        result = simulate("Mult.d F1 F2 F3\nBeq R0 R0 2\nAdd.d F1 F4 F5\nAdd.d F6 F1 F1\nAdd.d F7 F1 F1",
++                          issue_width=4, fp_mul_latency=10,
++                          registers={"F2": 2, "F3": 3, "F4": 20, "F5": 30})
++        self.assertEqual((result["registers"]["F1"], result["registers"]["F6"], result["registers"]["F7"]), (6, 0, 12))
++        self.assertEqual([r["pc"] for r in committed(result)], [0, 1, 4])
++        self.assertTrue(all(r["commit"] is None for r in result["instructions"] if r["squashed"]))
++
++    def test_wrong_path_store_never_modifies_memory(self):
++        result = simulate("Addi R1 R0 1\nBne R1 R0 2\nSd F1 12(R0)\nAdd.d F2 F1 F1\nAddi R2 R0 7",
++                          issue_width=4, int_latency=4, registers={"F1": 9}, memory={12: 3})
++        self.assertEqual(result["memory"][12], 3)
++        self.assertEqual(result["registers"]["F2"], 0)
++        self.assertEqual(result["registers"]["R2"], 7)
++        self.assertTrue(any(r["pc"] == 2 and r["squashed"] for r in result["instructions"]))
++
++    def test_wrong_path_invalid_load_is_squashed_before_fault_can_commit(self):
++        result = simulate("Beq R0 R0 1\nLd F1 256(R0)\nAddi R1 R0 7",
++                          issue_width=4, int_latency=4)
++        self.assertEqual(result["registers"]["R1"], 7)
++        self.assertEqual(result["registers"]["F1"], 0)
++        self.assertTrue(any(r["pc"] == 1 and r["squashed"] for r in result["instructions"]))
++
++    def test_alias_replay_cancels_an_inflight_memory_access_at_every_width(self):
++        for width in range(1, 5):
++            with self.subTest(width=width):
++                result = simulate("Addi R10 R0 12\nSd F1 0(R10)\nLd F2 12(R0)",
++                                  issue_width=width, int_latency=4, mem_latency=10,
++                                  registers={"F1": 9}, memory={12: 3})
++                event = result["memory_replays"][0]
++                old_load = next(r for r in result["instructions"] if r["id"] == event["load_id"])
++                self.assertLess(old_load["mem_start"], event["cycle"])
++                self.assertLess(event["cycle"], old_load["mem_start"] + 10 - 1)
++                self.assertIsNone(old_load["mem_end"])
++                self.assertTrue(old_load["squashed"])
++                self.assertIsNone(old_load["wb"])
++                self.assertEqual(result["registers"]["F2"], 9)
++                self.assertEqual(result["instruction_count"], 3)
++
++    def test_unknown_store_partial_byte_overlap_replays_load(self):
++        expected = bytearray(struct.pack("<f", 1.0) + bytes(4))
++        struct.pack_into("<f", expected, 2, 3.5)
++        result = simulate("Addi R10 R0 2\nSd F1 0(R10)\nLd F2 0(R0)",
++                          issue_width=3, int_latency=8, mem_latency=2,
++                          registers={"F1": 3.5}, memory={0: 1.0})
++        self.assertEqual(result["registers"]["F2"], struct.unpack_from("<f", expected, 0)[0])
++        self.assertEqual(len(result["memory_replays"]), 1)
++
++    def test_unknown_nonalias_store_does_not_block_load_or_force_replay(self):
++        result = simulate("Addi R10 R0 8\nSd F1 0(R10)\nLd F2 12(R0)", issue_width=3,
++                          int_latency=8, mem_latency=2, registers={"F1": 9}, memory={12: 3})
++        rows = committed(result)
++        self.assertLess(rows[2]["mem_start"], rows[1]["exe_end"])
++        self.assertEqual(result["registers"]["F2"], 3)
++        self.assertEqual(result["memory_replays"], [])
++
++    def test_alias_replay_discards_already_broadcast_value_and_younger_store(self):
++        result = simulate("Addi R10 R0 12\nSd F1 0(R10)\nLd F2 12(R0)\nAdd.d F3 F2 F2\nSd F3 16(R0)",
++                          issue_width=4, int_latency=8, mem_latency=2, fp_add_latency=1,
++                          registers={"F1": 9}, memory={12: 3})
++        self.assertEqual((result["registers"]["F2"], result["registers"]["F3"]), (9, 18))
++        self.assertEqual((result["memory"][12], result["memory"][16]), (9, 18))
++        event = result["memory_replays"][0]
++        first_load = next(r for r in result["instructions"] if r["id"] == event["load_id"])
++        replayed_load = next(r for r in committed(result) if r["pc"] == 2)
++        self.assertLess(first_load["wb"], event["cycle"])
++        self.assertTrue(first_load["squashed"])
++        self.assertEqual(replayed_load["issue"], event["cycle"] + 2)
++        self.assertEqual([r["pc"] for r in committed(result)], [0, 1, 2, 3, 4])
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)
+--- original/tests/test_simulator.py
++++ Ahmed_Ahmed_Tomasulo/tests/test_simulator.py
+@@ -0,0 +1,363 @@
++"""Independent behavioral regression tests.
++
++Assignment author: Ahmed Ahmed.
++Expected values come from hand calculations or the sequential oracle below;
++the oracle does not call the simulator parser, scheduler, or stage helpers.
++"""
++
++import collections
++import random
++import struct
++import subprocess
++import tempfile
++import sys
++import unittest
++from pathlib import Path
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "code"))
++from init import Config, parse_program, parse_input
++from simulator import Simulator
++
++
++def simulate(text, *, registers=None, memory=None, **options):
++    return Simulator(
++        parse_program(text), Config(**options),
++        registers={} if registers is None else registers,
++        memory={} if memory is None else memory,
++    ).run()
++
++
++def sequential_oracle(lines, initial_registers, initial_memory):
++    """Simple architectural interpreter for generated straight-line cases."""
++    registers = {f"{bank}{i}": 0 for bank in ("R", "F") for i in range(32)}
++    registers.update(initial_registers)
++    memory = {address: struct.unpack("<f", struct.pack("<f", value))[0]
++              for address, value in initial_memory.items()}
++    for line in lines:
++        op, *args = line.split()
++        if op == "Addi":
++            dest, left, immediate = args
++            value = registers[left] + int(immediate)
++        elif op in ("Add", "Add.d", "Sub", "Sub.d", "Mult.d"):
++            dest, left, right = args
++            a, b = registers[left], registers[right]
++            value = a * b if op == "Mult.d" else a - b if op.startswith("Sub") else a + b
++        elif op == "Ld":
++            dest, address = args
++            offset, base = address[:-1].split("(")
++            value = memory.get(registers[base] + int(offset), 0)
++        elif op == "Sd":
++            source, address = args
++            offset, base = address[:-1].split("(")
++            memory[registers[base] + int(offset)] = struct.unpack("<f", struct.pack("<f", registers[source]))[0]
++            continue
++        else:
++            raise AssertionError(f"Unsupported oracle operation {op}")
++        if dest != "R0":
++            registers[dest] = value
++    return registers, memory
++
++
++class TimingTests(unittest.TestCase):
++    def test_single_addi_hand_calculated_timing(self):
++        result = simulate("Addi R3 R0 7")
++        row = result["instructions"][0]
++        self.assertEqual((row["issue"], row["exe_start"], row["exe_end"], row["wb"], row["commit"]), (1, 2, 2, 3, 4))
++        self.assertEqual(result["cycles"], 4)
++        self.assertEqual(result["registers"]["R3"], 7)
++
++    def test_same_bundle_raw_waits_until_cycle_after_writeback(self):
++        result = simulate("Addi R1 R0 5\nAdd R2 R1 R1", issue_width=2)
++        first, second = result["instructions"]
++        self.assertEqual(first["issue"], second["issue"])
++        self.assertEqual((first["exe_start"], first["wb"], second["exe_start"], second["wb"]), (2, 3, 4, 5))
++        self.assertEqual(result["registers"]["R2"], 10)
++
++    def test_issue_widths_one_through_four(self):
++        text = "\n".join(f"Addi R{i} R0 {i}" for i in range(1, 9))
++        for width in range(1, 5):
++            with self.subTest(width=width):
++                result = simulate(text, issue_width=width, rs_int=16, int_units=4)
++                rows = result["instructions"]
++                self.assertEqual([row["issue"] for row in rows], [1 + i // width for i in range(8)])
++                self.assertTrue(all(count <= width for count in collections.Counter(r["issue"] for r in rows).values()))
++
++    def test_multiple_writeback_and_commit(self):
++        text = "\n".join(f"Addi R{i} R0 {i}" for i in range(1, 5))
++        result = simulate(text, issue_width=4, writeback_width=4, commit_width=4, int_units=4)
++        self.assertEqual([r["wb"] for r in result["instructions"]], [3] * 4)
++        self.assertEqual([r["commit"] for r in result["instructions"]], [4] * 4)
++
++    def test_single_cdb_serializes_ready_results(self):
++        text = "\n".join(f"Addi R{i} R0 {i}" for i in range(1, 5))
++        result = simulate(text, issue_width=4, writeback_width=1, commit_width=4, int_units=4)
++        self.assertEqual(sorted(r["wb"] for r in result["instructions"]), [3, 4, 5, 6])
++
++    def test_single_commit_serializes_simultaneous_results(self):
++        text = "\n".join(f"Addi R{i} R0 {i}" for i in range(1, 5))
++        result = simulate(text, issue_width=4, writeback_width=4, commit_width=1, int_units=4)
++        self.assertEqual([r["commit"] for r in result["instructions"]], [4, 5, 6, 7])
++
++    def test_arithmetic_latency_is_exact_with_overlapping_operations(self):
++        text = "\n".join(f"Add.d F{i} F0 F0" for i in range(1, 8))
++        result = simulate(text, issue_width=4, fp_add_latency=4, rs_fp_add=8)
++        rows = result["instructions"]
++        self.assertTrue(all(r["exe_end"] - r["exe_start"] + 1 == 4 for r in rows))
++        self.assertEqual([r["exe_start"] for r in rows], list(range(2, 9)))
++
++    def test_two_pipelined_units_admit_two_operations_each_cycle(self):
++        text = "\n".join(f"Mult.d F{i} F0 F0" for i in range(1, 7))
++        result = simulate(text, issue_width=4, fp_mul_units=2, fp_mul_latency=5, rs_fp_mul=8)
++        self.assertEqual([r["exe_start"] for r in result["instructions"]], [2, 2, 3, 3, 4, 4])
++        self.assertTrue(all(r["exe_end"] - r["exe_start"] + 1 == 5 for r in result["instructions"]))
++
++    def test_in_order_commit_waits_for_older_long_operation(self):
++        result = simulate("Mult.d F1 F2 F3\nAddi R1 R0 8", issue_width=2, writeback_width=2, commit_width=2,
++                          registers={"F2": 2, "F3": 3})
++        older, younger = result["instructions"]
++        self.assertLess(younger["wb"], older["wb"])
++        self.assertGreaterEqual(younger["commit"], older["commit"])
++
++    def test_out_of_order_execution_bypasses_waiting_instruction(self):
++        result = simulate("Mult.d F1 F2 F3\nAdd.d F4 F1 F1\nAdd.d F5 F2 F3", issue_width=3,
++                          registers={"F2": 2, "F3": 3})
++        rows = result["instructions"]
++        self.assertLess(rows[2]["exe_start"], rows[1]["exe_start"])
++        self.assertEqual(result["registers"]["F4"], 12)
++        self.assertEqual(result["registers"]["F5"], 5)
++
++    def test_strict_in_order_execution_option(self):
++        result = simulate("Mult.d F1 F2 F3\nAdd.d F4 F1 F1\nAdd.d F5 F2 F3", issue_width=3,
++                          execution_order="in_order", registers={"F2": 2, "F3": 3})
++        starts = [r["exe_start"] for r in result["instructions"]]
++        self.assertEqual(starts, sorted(starts))
++
++    def test_rob_capacity_one_forces_reuse_after_commit(self):
++        result = simulate("Addi R1 R0 1\nAddi R2 R0 2\nAddi R3 R0 3", issue_width=4, rob_size=1)
++        rows = result["instructions"]
++        self.assertGreaterEqual(rows[1]["issue"], rows[0]["commit"])
++        self.assertGreaterEqual(rows[2]["issue"], rows[1]["commit"])
++        self.assertEqual(result["registers"]["R3"], 3)
++
++    def test_rs_full_stalls_younger_issue_in_program_order(self):
++        result = simulate("Mult.d F1 F2 F3\nAdd.d F4 F1 F1\nAdd.d F5 F2 F3\nAddi R1 R0 1",
++                          issue_width=4, rs_fp_add=1, registers={"F2": 2, "F3": 3})
++        rows = result["instructions"]
++        self.assertGreater(rows[2]["issue"], rows[1]["issue"])
++        self.assertGreaterEqual(rows[3]["issue"], rows[2]["issue"])
++
++
++class DependencyTests(unittest.TestCase):
++    def test_same_bundle_waw_keeps_youngest_producer(self):
++        result = simulate("Mult.d F1 F2 F3\nAdd.d F1 F4 F5\nAdd.d F6 F1 F0",
++                          issue_width=4, registers={"F2": 2, "F3": 3, "F4": 4, "F5": 5})
++        self.assertEqual(result["registers"]["F1"], 9)
++        self.assertEqual(result["registers"]["F6"], 9)
++
++    def test_late_reader_does_not_observe_stale_older_waw_result(self):
++        lines = ["Mult.d F1 F2 F3", "Add.d F1 F4 F5"] + ["Addi R1 R1 1"] * 12 + ["Add.d F6 F1 F0"]
++        result = simulate("\n".join(lines), issue_width=4, rs_int=1,
++                          registers={"F2": 2, "F3": 3, "F4": 4, "F5": 5})
++        self.assertGreater(result["instructions"][-1]["issue"], result["instructions"][0]["wb"])
++        self.assertEqual(result["registers"]["F6"], 9)
++
++    def test_war_captures_old_operand_before_younger_rename(self):
++        result = simulate("Mult.d F2 F1 F3\nAdd.d F1 F4 F5", issue_width=2,
++                          registers={"F1": 10, "F3": 2, "F4": 1, "F5": 2})
++        self.assertEqual(result["registers"]["F2"], 20)
++        self.assertEqual(result["registers"]["F1"], 3)
++
++    def test_self_renaming_reads_previous_value(self):
++        result = simulate("Addi R1 R1 1\nAddi R1 R1 1\nAdd R2 R1 R1", issue_width=3, registers={"R1": 5})
++        self.assertEqual(result["registers"]["R1"], 7)
++        self.assertEqual(result["registers"]["R2"], 14)
++
++    def test_r0_is_immutable_and_never_renamed(self):
++        result = simulate("Addi R0 R0 19\nAddi R1 R0 7\nAdd R2 R0 R1", issue_width=3)
++        self.assertEqual(result["registers"]["R0"], 0)
++        self.assertEqual(result["registers"]["R1"], 7)
++        self.assertEqual(result["registers"]["R2"], 7)
++
++    def test_float_register_zero_is_writable(self):
++        result = simulate("Add.d F0 F1 F2\nAdd.d F3 F0 F0", issue_width=2, registers={"F1": 2, "F2": 3})
++        self.assertEqual(result["registers"]["F0"], 5)
++        self.assertEqual(result["registers"]["F3"], 10)
++
++
++class MemoryTests(unittest.TestCase):
++    def test_final_store_drains_and_updates_memory(self):
++        result = simulate("Sd F1 0(R1)", registers={"F1": 7.5, "R1": 12}, mem_latency=5)
++        row = result["instructions"][0]
++        self.assertEqual(result["memory"][12], 7.5)
++        self.assertEqual(row["mem_end"] - row["mem_start"] + 1, 5)
++        self.assertGreaterEqual(row["commit"], row["mem_end"])
++        self.assertGreaterEqual(result["cycles"], row["commit"])
++
++    def test_load_stage_boundaries_and_exact_memory_latency(self):
++        result = simulate("Ld F1 0(R1)", registers={"R1": 12}, memory={12: 4.5}, addr_latency=2, mem_latency=5)
++        row = result["instructions"][0]
++        self.assertEqual(row["exe_end"] - row["exe_start"] + 1, 2)
++        self.assertEqual(row["mem_end"] - row["mem_start"] + 1, 5)
++        self.assertGreater(row["mem_start"], row["exe_end"])
++        self.assertGreater(row["wb"], row["mem_end"])
++        self.assertGreater(row["commit"], row["wb"])
++        self.assertEqual(result["registers"]["F1"], 4.5)
++
++    def test_negative_offset_multidigit_base_register(self):
++        result = simulate("Ld F31 -8(R12)\nSd F31 4(R31)", issue_width=2,
++                          registers={"R12": 20, "R31": 28}, memory={12: 11.25})
++        self.assertEqual(result["registers"]["F31"], 11.25)
++        self.assertEqual(result["memory"][32], 11.25)
++
++    def test_unknown_older_store_address_speculates_then_replays_alias(self):
++        result = simulate("Addi R10 R0 12\nSd F1 0(R10)\nLd F2 0(R1)", issue_width=3,
++                          int_latency=6, addr_units=2, mem_latency=2,
++                          registers={"F1": 9, "R1": 12}, memory={12: 3})
++        self.assertEqual(result["registers"]["F2"], 9)
++        rows = result["instructions"]
++        self.assertLess(rows[2]["mem_start"], rows[1]["exe_end"])
++        self.assertTrue(rows[2]["squashed"])
++        self.assertEqual(len(result["memory_replays"]), 1)
++        self.assertEqual(len([r for r in rows if r["pc"] == 2 and r["commit"] is not None]), 1)
++
++    def test_load_waits_for_older_store_data(self):
++        result = simulate("Mult.d F1 F3 F4\nSd F1 0(R1)\nLd F2 0(R1)", issue_width=3,
++                          registers={"R1": 12, "F3": 3, "F4": 4}, memory={12: 1})
++        self.assertEqual(result["registers"]["F2"], 12)
++        self.assertGreater(result["instructions"][2]["mem_start"], result["instructions"][0]["wb"])
++
++    def test_forwarding_uses_youngest_older_store(self):
++        result = simulate("Mult.d F20 F3 F4\nSd F1 0(R1)\nSd F2 0(R1)\nLd F5 0(R1)",
++                          issue_width=4, addr_units=2, mem_units=2,
++                          registers={"R1": 12, "F1": 7, "F2": 9, "F3": 2, "F4": 2}, memory={12: 1})
++        self.assertEqual(result["registers"]["F5"], 9)
++        self.assertEqual(result["memory"][12], 9)
++        rows = result["instructions"]
++        self.assertEqual(rows[3]["forwarded_from"], rows[2]["id"])
++
++    def test_nonalias_load_bypasses_store_waiting_for_data(self):
++        result = simulate("Mult.d F1 F3 F4\nSd F1 0(R1)\nLd F2 4(R1)", issue_width=3,
++                          addr_units=2, mem_units=2,
++                          registers={"R1": 8, "F3": 3, "F4": 4}, memory={12: 5})
++        rows = result["instructions"]
++        self.assertLess(rows[2]["wb"], rows[0]["wb"])
++        self.assertEqual(result["registers"]["F2"], 5)
++
++    def test_two_memory_units_overlap_independent_loads(self):
++        result = simulate("Ld F1 0(R1)\nLd F2 4(R1)", issue_width=2, addr_units=2, mem_units=2,
++                          registers={"R1": 8}, memory={8: 2, 12: 3})
++        rows = result["instructions"]
++        self.assertEqual(rows[0]["mem_start"], rows[1]["mem_start"])
++        self.assertEqual((result["registers"]["F1"], result["registers"]["F2"]), (2, 3))
++
++    def test_one_memory_unit_is_not_pipelined(self):
++        result = simulate("Ld F1 0(R1)\nLd F2 4(R1)", issue_width=2, addr_units=2, mem_units=1,
++                          registers={"R1": 8}, memory={8: 2, 12: 3})
++        rows = result["instructions"]
++        self.assertGreater(rows[1]["mem_start"], rows[0]["mem_end"])
++
++    def test_lsq_capacity_one_does_not_drop_loads_or_stores(self):
++        result = simulate("Ld F1 0(R1)\nSd F1 4(R1)\nLd F2 4(R1)", issue_width=4,
++                          lsq_size=1, registers={"R1": 8}, memory={8: 6})
++        self.assertEqual(result["registers"]["F2"], 6)
++        self.assertEqual(result["memory"][12], 6)
++
++
++class BranchAndInputTests(unittest.TestCase):
++    def test_final_branch_does_not_crash(self):
++        result = simulate("Bne R0 R0 0", issue_width=4)
++        self.assertEqual(len(result["instructions"]), 1)
++        self.assertIsNotNone(result["instructions"][0]["commit"])
++
++    def test_taken_branch_skips_younger_same_bundle_instruction(self):
++        for width in range(1, 5):
++            with self.subTest(width=width):
++                result = simulate("Addi R1 R0 1\nBne R1 R0 1\nAddi R2 R0 99\nAddi R3 R0 7", issue_width=width)
++                self.assertEqual(result["registers"]["R2"], 0)
++                self.assertEqual(result["registers"]["R3"], 7)
++                self.assertEqual([r["pc"] for r in result["instructions"] if r["commit"] is not None], [0, 1, 3])
++
++    def test_not_taken_branch_continues(self):
++        result = simulate("Bne R0 R0 1\nAddi R1 R0 7", issue_width=4)
++        self.assertEqual(result["registers"]["R1"], 7)
++
++    def test_beq_taken(self):
++        result = simulate("Beq R0 R0 1\nAddi R1 R0 99\nAddi R2 R0 7", issue_width=4)
++        self.assertEqual((result["registers"]["R1"], result["registers"]["R2"]), (0, 7))
++
++    def test_loop_uses_next_pc_relative_word_displacement(self):
++        result = simulate("Addi R1 R1 -1\nAddi R2 R2 2\nBne R1 R0 -3", issue_width=4,
++                          registers={"R1": 3})
++        self.assertEqual(result["registers"]["R1"], 0)
++        self.assertEqual(result["registers"]["R2"], 6)
++        committed = [r for r in result["instructions"] if r["commit"] is not None]
++        self.assertEqual(len(committed), 9)
++        self.assertEqual([r["pc"] for r in committed], [0, 1, 2] * 3)
++        self.assertEqual(len(set(r["id"] for r in result["instructions"])), len(result["instructions"]))
++
++    def test_empty_program(self):
++        result = simulate("")
++        self.assertEqual(result["cycles"], 0)
++        self.assertEqual(result["instructions"], [])
++
++    def test_comments_commas_case_and_labels(self):
++        result = simulate("# comments\nAddi R1, R0, 2\nloop: addi R1, R1, -1 # decrement\nbne R1, R0, loop\n")
++        self.assertEqual(result["registers"]["R1"], 0)
++        self.assertEqual(len([r for r in result["instructions"] if r["commit"] is not None]), 5)
++
++    def test_invalid_programs_fail_explicitly(self):
++        bad = ["Unknown R1 R2 R3", "Addi R32 R0 1", "Addi R1 R0", "Ld F1 nonsense", "Bne R0 R0 3", "Add.d F1 R2 F3"]
++        for text in bad:
++            with self.subTest(program=text):
++                with self.assertRaises((ValueError, TypeError)):
++                    simulate(text)
++
++    def test_invalid_configuration_fails_explicitly(self):
++        for options in ({"issue_width": 0}, {"issue_width": 5}, {"writeback_width": 0}, {"commit_width": 0},
++                        {"rob_size": 0}, {"rs_int": 0}, {"int_latency": 0}, {"mem_units": 0}):
++            with self.subTest(options=options):
++                with self.assertRaises((ValueError, TypeError)):
++                    simulate("Addi R1 R0 1", **options)
++
++
++class DifferentialTests(unittest.TestCase):
++    def test_seeded_programs_match_independent_sequential_interpreter(self):
++        """80 runs: 20 different programs at each of four issue widths."""
++        for seed in range(20):
++            rng = random.Random(seed)
++            initial_registers = {**{f"R{i}": rng.randrange(-5, 6) for i in range(1, 9)},
++                                 **{f"F{i}": float(rng.randrange(-3, 4)) for i in range(1, 9)}, "R20": 64}
++            initial_memory = {64 + 4 * i: float(rng.randrange(-5, 6)) for i in range(8)}
++            lines = []
++            for _ in range(40):
++                op = rng.choice(["Addi", "Add", "Sub", "Add.d", "Sub.d", "Mult.d", "Ld", "Sd"])
++                a, b, c = [rng.randrange(1, 9) for _ in range(3)]
++                if op == "Addi":
++                    lines.append(f"Addi R{a} R{b} {rng.randrange(-3, 4)}")
++                elif op in ("Add", "Sub"):
++                    lines.append(f"{op} R{a} R{b} R{c}")
++                elif op in ("Ld", "Sd"):
++                    lines.append(f"{op} F{a} {4 * rng.randrange(8)}(R20)")
++                else:
++                    lines.append(f"{op} F{a} F{b} F{c}")
++            expected_registers, expected_memory = sequential_oracle(lines, initial_registers, initial_memory)
++            for width in range(1, 5):
++                with self.subTest(seed=seed, issue_width=width):
++                    result = simulate("\n".join(lines), issue_width=width,
++                                      registers=initial_registers, memory=initial_memory)
++                    self.assertEqual(result["registers"], expected_registers)
++                    for address in set(expected_memory) | set(result["memory"]):
++                        self.assertEqual(result["memory"].get(address, 0), expected_memory.get(address, 0))
++                    rows = result["instructions"]
++                    self.assertEqual(len(rows), len(lines))
++                    self.assertEqual([r["commit"] for r in rows], sorted(r["commit"] for r in rows))
++                    for row in rows:
++                        self.assertGreater(row["exe_start"], row["issue"])
++                        if row["wb"] is not None:
++                            completed = row["mem_end"] if row["mem_end"] is not None else row["exe_end"]
++                            self.assertGreater(row["wb"], completed)
++                            self.assertGreater(row["commit"], row["wb"])
++
++
++if __name__ == "__main__":
++    unittest.main(verbosity=2)

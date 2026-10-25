@@ -1,0 +1,16 @@
+# Additional nonpipelined integer-unit test: three-cycle latency allows only one operation every three cycles.
+# Author: Ahmed Ahmed
+# Assignment model: one CDB, one memory port, word branch offsets.
+
+# of rs              Cycles in EX    Cycles in Mem    # of FUs
+Integer adder           4               3                          1
+FP adder                3               4                          1
+FP multiplier           2              15                          1
+Load/store unit         5               1               5          1
+
+ROB entries = 64
+Issue width = 1
+
+Addi R3 R0 1
+Addi R4 R0 2
+Addi R5 R0 3

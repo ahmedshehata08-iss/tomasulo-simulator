@@ -1,0 +1,37 @@
+case,title,policy,issue_width,writeback_width,commit_width,memory_ports,cycles,instructions,issued,squashed,ipc,speedup,peak_issue,peak_wb,peak_commit,branch_mispredictions,memory_replays,state_check
+sample_case1,Sample case 1 under assignment hardware rules,assignment,1,1,1,1,36,17,17,0,0.472222,1.0,1,1,1,0,0,PASS
+sample_case1,Sample case 1 under assignment hardware rules,assignment,2,1,1,1,36,17,17,0,0.472222,1.0,2,1,1,0,0,PASS
+sample_case1,Sample case 1 under assignment hardware rules,assignment,3,1,1,1,36,17,17,0,0.472222,1.0,3,1,1,0,0,PASS
+sample_case1,Sample case 1 under assignment hardware rules,assignment,4,1,1,1,36,17,17,0,0.472222,1.0,4,1,1,0,0,PASS
+sample_case2,Sample case 2 adapted to one memory port,assignment,1,1,1,1,47,17,17,0,0.361702,1.0,1,1,1,0,0,PASS
+sample_case2,Sample case 2 adapted to one memory port,assignment,2,1,1,1,46,17,17,0,0.369565,1.021739,2,1,1,0,0,PASS
+sample_case2,Sample case 2 adapted to one memory port,assignment,3,1,1,1,46,17,17,0,0.369565,1.021739,3,1,1,0,0,PASS
+sample_case2,Sample case 2 adapted to one memory port,assignment,4,1,1,1,46,17,17,0,0.369565,1.021739,4,1,1,0,0,PASS
+starter_branch,Starter branch control flow with word offset,assignment,1,1,1,1,45,15,16,1,0.333333,1.0,1,1,1,2,0,PASS
+starter_branch,Starter branch control flow with word offset,assignment,2,1,1,1,45,15,19,4,0.333333,1.0,2,1,1,2,0,PASS
+starter_branch,Starter branch control flow with word offset,assignment,3,1,1,1,45,15,19,4,0.333333,1.0,3,1,1,2,0,PASS
+starter_branch,Starter branch control flow with word offset,assignment,4,1,1,1,45,15,19,4,0.333333,1.0,4,1,1,2,0,PASS
+full_loop,Additional complete three-iteration loop,assignment,1,1,1,1,67,25,26,1,0.373134,1.0,1,1,1,2,0,PASS
+full_loop,Additional complete three-iteration loop,assignment,2,1,1,1,66,25,26,1,0.378788,1.015152,2,1,1,2,0,PASS
+full_loop,Additional complete three-iteration loop,assignment,3,1,1,1,66,25,26,1,0.378788,1.015152,3,1,1,2,0,PASS
+full_loop,Additional complete three-iteration loop,assignment,4,1,1,1,66,25,26,1,0.378788,1.015152,4,1,1,2,0,PASS
+independent_throughput,Additional independent integer throughput test,assignment,1,1,1,1,27,24,24,0,0.888889,1.0,1,1,1,0,0,PASS
+independent_throughput,Additional independent integer throughput test,assignment,2,1,1,1,27,24,24,0,0.888889,1.0,2,1,1,0,0,PASS
+independent_throughput,Additional independent integer throughput test,assignment,3,1,1,1,27,24,24,0,0.888889,1.0,3,1,1,0,0,PASS
+independent_throughput,Additional independent integer throughput test,assignment,4,1,1,1,27,24,24,0,0.888889,1.0,4,1,1,0,0,PASS
+assignment_demo,Terminating variation of the handout example,assignment,1,1,1,1,10,3,3,0,0.3,1.0,1,1,1,0,0,PASS
+assignment_demo,Terminating variation of the handout example,assignment,2,1,1,1,9,3,3,0,0.333333,1.111111,2,1,1,0,0,PASS
+assignment_demo,Terminating variation of the handout example,assignment,3,1,1,1,9,3,3,0,0.333333,1.111111,3,1,1,0,0,PASS
+assignment_demo,Terminating variation of the handout example,assignment,4,1,1,1,9,3,3,0,0.333333,1.111111,3,1,1,0,0,PASS
+branch_recovery,Additional one-bit branch recovery test,assignment,1,1,1,1,28,13,17,4,0.464286,1.0,1,1,1,2,0,PASS
+branch_recovery,Additional one-bit branch recovery test,assignment,2,1,1,1,25,13,19,6,0.52,1.12,2,1,1,2,0,PASS
+branch_recovery,Additional one-bit branch recovery test,assignment,3,1,1,1,25,13,19,6,0.52,1.12,3,1,1,2,0,PASS
+branch_recovery,Additional one-bit branch recovery test,assignment,4,1,1,1,25,13,19,6,0.52,1.12,4,1,1,2,0,PASS
+memory_replay,Additional unknown-store-address replay test,assignment,1,1,1,1,19,5,8,3,0.263158,1.0,1,1,1,0,1,PASS
+memory_replay,Additional unknown-store-address replay test,assignment,2,1,1,1,19,5,8,3,0.263158,1.0,2,1,1,0,1,PASS
+memory_replay,Additional unknown-store-address replay test,assignment,3,1,1,1,19,5,8,3,0.263158,1.0,3,1,1,0,1,PASS
+memory_replay,Additional unknown-store-address replay test,assignment,4,1,1,1,19,5,8,3,0.263158,1.0,4,1,1,0,1,PASS
+integer_unpipelined,Additional three-cycle integer-unit test,assignment,1,1,1,1,12,3,3,0,0.25,1.0,1,1,1,0,0,PASS
+integer_unpipelined,Additional three-cycle integer-unit test,assignment,2,1,1,1,12,3,3,0,0.25,1.0,2,1,1,0,0,PASS
+integer_unpipelined,Additional three-cycle integer-unit test,assignment,3,1,1,1,12,3,3,0,0.25,1.0,3,1,1,0,0,PASS
+integer_unpipelined,Additional three-cycle integer-unit test,assignment,4,1,1,1,12,3,3,0,0.25,1.0,3,1,1,0,0,PASS

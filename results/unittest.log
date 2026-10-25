@@ -1,0 +1,45 @@
+test_beq_taken (test_simulator.BranchAndInputTests.test_beq_taken) ... ok
+test_comments_commas_case_and_labels (test_simulator.BranchAndInputTests.test_comments_commas_case_and_labels) ... ok
+test_empty_program (test_simulator.BranchAndInputTests.test_empty_program) ... ok
+test_final_branch_does_not_crash (test_simulator.BranchAndInputTests.test_final_branch_does_not_crash) ... ok
+test_invalid_configuration_fails_explicitly (test_simulator.BranchAndInputTests.test_invalid_configuration_fails_explicitly) ... ok
+test_invalid_programs_fail_explicitly (test_simulator.BranchAndInputTests.test_invalid_programs_fail_explicitly) ... ok
+test_loop_uses_next_pc_relative_byte_displacement (test_simulator.BranchAndInputTests.test_loop_uses_next_pc_relative_byte_displacement) ... ok
+test_not_taken_branch_continues (test_simulator.BranchAndInputTests.test_not_taken_branch_continues) ... ok
+test_taken_branch_skips_younger_same_bundle_instruction (test_simulator.BranchAndInputTests.test_taken_branch_skips_younger_same_bundle_instruction) ... ok
+test_float_register_zero_is_writable (test_simulator.DependencyTests.test_float_register_zero_is_writable) ... ok
+test_late_reader_does_not_observe_stale_older_waw_result (test_simulator.DependencyTests.test_late_reader_does_not_observe_stale_older_waw_result) ... ok
+test_r0_is_immutable_and_never_renamed (test_simulator.DependencyTests.test_r0_is_immutable_and_never_renamed) ... ok
+test_same_bundle_waw_keeps_youngest_producer (test_simulator.DependencyTests.test_same_bundle_waw_keeps_youngest_producer) ... ok
+test_self_renaming_reads_previous_value (test_simulator.DependencyTests.test_self_renaming_reads_previous_value) ... ok
+test_war_captures_old_operand_before_younger_rename (test_simulator.DependencyTests.test_war_captures_old_operand_before_younger_rename) ... ok
+test_seeded_programs_match_independent_sequential_interpreter (test_simulator.DifferentialTests.test_seeded_programs_match_independent_sequential_interpreter)
+80 runs: 20 different programs at each of four issue widths. ... ok
+test_final_store_drains_and_updates_memory (test_simulator.MemoryTests.test_final_store_drains_and_updates_memory) ... ok
+test_forwarding_uses_youngest_older_store (test_simulator.MemoryTests.test_forwarding_uses_youngest_older_store) ... ok
+test_load_stage_boundaries_and_exact_memory_latency (test_simulator.MemoryTests.test_load_stage_boundaries_and_exact_memory_latency) ... ok
+test_load_waits_for_older_store_data (test_simulator.MemoryTests.test_load_waits_for_older_store_data) ... ok
+test_lsq_capacity_one_does_not_drop_loads_or_stores (test_simulator.MemoryTests.test_lsq_capacity_one_does_not_drop_loads_or_stores) ... ok
+test_negative_offset_multidigit_base_register (test_simulator.MemoryTests.test_negative_offset_multidigit_base_register) ... ok
+test_nonalias_load_bypasses_store_waiting_for_data (test_simulator.MemoryTests.test_nonalias_load_bypasses_store_waiting_for_data) ... ok
+test_one_memory_unit_is_not_pipelined (test_simulator.MemoryTests.test_one_memory_unit_is_not_pipelined) ... ok
+test_two_memory_units_overlap_independent_loads (test_simulator.MemoryTests.test_two_memory_units_overlap_independent_loads) ... ok
+test_unknown_older_store_address_blocks_aliasing_load (test_simulator.MemoryTests.test_unknown_older_store_address_blocks_aliasing_load) ... ok
+test_arithmetic_latency_is_exact_with_overlapping_operations (test_simulator.TimingTests.test_arithmetic_latency_is_exact_with_overlapping_operations) ... ok
+test_in_order_commit_waits_for_older_long_operation (test_simulator.TimingTests.test_in_order_commit_waits_for_older_long_operation) ... ok
+test_issue_widths_one_through_four (test_simulator.TimingTests.test_issue_widths_one_through_four) ... ok
+test_multiple_writeback_and_commit (test_simulator.TimingTests.test_multiple_writeback_and_commit) ... ok
+test_out_of_order_execution_bypasses_waiting_instruction (test_simulator.TimingTests.test_out_of_order_execution_bypasses_waiting_instruction) ... ok
+test_rob_capacity_one_forces_reuse_after_commit (test_simulator.TimingTests.test_rob_capacity_one_forces_reuse_after_commit) ... ok
+test_rs_full_stalls_younger_issue_in_program_order (test_simulator.TimingTests.test_rs_full_stalls_younger_issue_in_program_order) ... ok
+test_same_bundle_raw_waits_until_cycle_after_writeback (test_simulator.TimingTests.test_same_bundle_raw_waits_until_cycle_after_writeback) ... ok
+test_single_addi_hand_calculated_timing (test_simulator.TimingTests.test_single_addi_hand_calculated_timing) ... ok
+test_single_cdb_serializes_ready_results (test_simulator.TimingTests.test_single_cdb_serializes_ready_results) ... ok
+test_single_commit_serializes_simultaneous_results (test_simulator.TimingTests.test_single_commit_serializes_simultaneous_results) ... ok
+test_strict_in_order_execution_option (test_simulator.TimingTests.test_strict_in_order_execution_option) ... ok
+test_two_pipelined_units_admit_two_operations_each_cycle (test_simulator.TimingTests.test_two_pipelined_units_admit_two_operations_each_cycle) ... ok
+
+----------------------------------------------------------------------
+Ran 39 tests in 0.107s
+
+OK

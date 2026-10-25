@@ -1,0 +1,20 @@
+# Additional memory-disambiguation test: a younger load passes an unknown older store address and must replay on alias.
+# Author: Ahmed Ahmed
+# Assignment model: one CDB, one memory port, word branch offsets.
+
+# of rs              Cycles in EX    Cycles in Mem    # of FUs
+Integer adder           4               4                          1
+FP adder                3               3                          1
+FP multiplier           2              15                          1
+Load/store unit         4               1               2          1
+
+ROB entries = 64
+Issue width = 1
+R2=16, F20=7
+Mem[16]=1
+
+Addi R1 R0 16
+Sd F20 0(R1)
+Ld F2 0(R2)
+Add.d F4 F2 F2
+Addi R3 R0 99

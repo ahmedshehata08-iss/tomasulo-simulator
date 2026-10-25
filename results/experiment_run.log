@@ -1,0 +1,37 @@
+sample_case1             W=1 cycles= 36 committed=17 squashed= 0 mispred=0 replay=0 PASS
+sample_case1             W=2 cycles= 36 committed=17 squashed= 0 mispred=0 replay=0 PASS
+sample_case1             W=3 cycles= 36 committed=17 squashed= 0 mispred=0 replay=0 PASS
+sample_case1             W=4 cycles= 36 committed=17 squashed= 0 mispred=0 replay=0 PASS
+sample_case2             W=1 cycles= 47 committed=17 squashed= 0 mispred=0 replay=0 PASS
+sample_case2             W=2 cycles= 46 committed=17 squashed= 0 mispred=0 replay=0 PASS
+sample_case2             W=3 cycles= 46 committed=17 squashed= 0 mispred=0 replay=0 PASS
+sample_case2             W=4 cycles= 46 committed=17 squashed= 0 mispred=0 replay=0 PASS
+starter_branch           W=1 cycles= 45 committed=15 squashed= 1 mispred=2 replay=0 PASS
+starter_branch           W=2 cycles= 45 committed=15 squashed= 4 mispred=2 replay=0 PASS
+starter_branch           W=3 cycles= 45 committed=15 squashed= 4 mispred=2 replay=0 PASS
+starter_branch           W=4 cycles= 45 committed=15 squashed= 4 mispred=2 replay=0 PASS
+full_loop                W=1 cycles= 67 committed=25 squashed= 1 mispred=2 replay=0 PASS
+full_loop                W=2 cycles= 66 committed=25 squashed= 1 mispred=2 replay=0 PASS
+full_loop                W=3 cycles= 66 committed=25 squashed= 1 mispred=2 replay=0 PASS
+full_loop                W=4 cycles= 66 committed=25 squashed= 1 mispred=2 replay=0 PASS
+independent_throughput   W=1 cycles= 27 committed=24 squashed= 0 mispred=0 replay=0 PASS
+independent_throughput   W=2 cycles= 27 committed=24 squashed= 0 mispred=0 replay=0 PASS
+independent_throughput   W=3 cycles= 27 committed=24 squashed= 0 mispred=0 replay=0 PASS
+independent_throughput   W=4 cycles= 27 committed=24 squashed= 0 mispred=0 replay=0 PASS
+assignment_demo          W=1 cycles= 10 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+assignment_demo          W=2 cycles=  9 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+assignment_demo          W=3 cycles=  9 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+assignment_demo          W=4 cycles=  9 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+branch_recovery          W=1 cycles= 28 committed=13 squashed= 4 mispred=2 replay=0 PASS
+branch_recovery          W=2 cycles= 25 committed=13 squashed= 6 mispred=2 replay=0 PASS
+branch_recovery          W=3 cycles= 25 committed=13 squashed= 6 mispred=2 replay=0 PASS
+branch_recovery          W=4 cycles= 25 committed=13 squashed= 6 mispred=2 replay=0 PASS
+memory_replay            W=1 cycles= 19 committed= 5 squashed= 3 mispred=0 replay=1 PASS
+memory_replay            W=2 cycles= 19 committed= 5 squashed= 3 mispred=0 replay=1 PASS
+memory_replay            W=3 cycles= 19 committed= 5 squashed= 3 mispred=0 replay=1 PASS
+memory_replay            W=4 cycles= 19 committed= 5 squashed= 3 mispred=0 replay=1 PASS
+integer_unpipelined      W=1 cycles= 12 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+integer_unpipelined      W=2 cycles= 12 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+integer_unpipelined      W=3 cycles= 12 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+integer_unpipelined      W=4 cycles= 12 committed= 3 squashed= 0 mispred=0 replay=0 PASS
+PASS: 36 terminating experiments and 4 expected literal-input cycle-limit checks.

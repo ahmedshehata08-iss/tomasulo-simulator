@@ -1,0 +1,73 @@
+{
+  "author": "Ahmed Ahmed",
+  "tables_checked": 8,
+  "rows_checked": 136,
+  "method": "Independent per-cycle constraints and greedy selections; no simulator imports",
+  "status": "PASS",
+  "findings": [
+    {
+      "file": "experiment_sample_case1_assignment_w1.json",
+      "sha256": "fed640d37b391f945620e818a015e844e725e8f914a3a0616060b1b33c48cf3d",
+      "issue_width": 1,
+      "cycles": 36,
+      "rows_checked": 17,
+      "status": "PASS"
+    },
+    {
+      "file": "experiment_sample_case1_assignment_w2.json",
+      "sha256": "fc5565dfb0b87a3aea2dd4e9875cfed126915d4772db179deae069e85651a91c",
+      "issue_width": 2,
+      "cycles": 36,
+      "rows_checked": 17,
+      "status": "PASS"
+    },
+    {
+      "file": "experiment_sample_case1_assignment_w3.json",
+      "sha256": "63da11886ed4668ae9b5518e0f7224a9280314aa064cb771b66b9d4827675e3d",
+      "issue_width": 3,
+      "cycles": 36,
+      "rows_checked": 17,
+      "status": "PASS"
+    },
+    {
+      "file": "experiment_sample_case1_assignment_w4.json",
+      "sha256": "af5b01def40dcfe367240b6f8f969e37643b70a43d242f5a1dd7a0119fc152b2",
+      "issue_width": 4,
+      "cycles": 36,
+      "rows_checked": 17,
+      "status": "PASS"
+    },
+    {
+      "file": "experiment_sample_case2_assignment_w1.json",
+      "sha256": "8e402c54b8639169178d02ee87c0d5c01c3286d6b5eac168a7fbe4f6419ea270",
+      "issue_width": 1,
+      "cycles": 47,
+      "rows_checked": 17,
+      "status": "PASS"
+    },
+    {
+      "file": "experiment_sample_case2_assignment_w2.json",
+      "sha256": "7c2aca2ff22d09f93b1256612f7390c2730d8ed6bce5784736486e336b05fc23",
+      "issue_width": 2,
+      "cycles": 46,
+      "rows_checked": 17,
+      "status": "PASS"
+    },
+    {
+      "file": "experiment_sample_case2_assignment_w3.json",
+      "sha256": "947e010df0b925dcffe1d12ce283213ea4ddec459539d45733a51861a319eb4d",
+      "issue_width": 3,
+      "cycles": 46,
+      "rows_checked": 17,
+      "status": "PASS"
+    },
+    {
+      "file": "experiment_sample_case2_assignment_w4.json",
+      "sha256": "988fd6d76a18ffc74099eb6cf9869ab9c275626a41ab11b0560c7a25b34756ab",
+      "issue_width": 4,
+      "cycles": 46,
+      "rows_checked": 17,
+      "status": "PASS"
+    }
+  ]
+}

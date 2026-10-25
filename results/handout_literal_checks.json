@@ -1,0 +1,30 @@
+[
+  {
+    "case": "handout_literal",
+    "issue_width": 1,
+    "max_cycles": 200,
+    "status": "EXPECTED_CYCLE_LIMIT",
+    "reason": "R2 remains 20 and R3 remains 0; Bne -3 always branches to PC0."
+  },
+  {
+    "case": "handout_literal",
+    "issue_width": 2,
+    "max_cycles": 200,
+    "status": "EXPECTED_CYCLE_LIMIT",
+    "reason": "R2 remains 20 and R3 remains 0; Bne -3 always branches to PC0."
+  },
+  {
+    "case": "handout_literal",
+    "issue_width": 3,
+    "max_cycles": 200,
+    "status": "EXPECTED_CYCLE_LIMIT",
+    "reason": "R2 remains 20 and R3 remains 0; Bne -3 always branches to PC0."
+  },
+  {
+    "case": "handout_literal",
+    "issue_width": 4,
+    "max_cycles": 200,
+    "status": "EXPECTED_CYCLE_LIMIT",
+    "reason": "R2 remains 20 and R3 remains 0; Bne -3 always branches to PC0."
+  }
+]

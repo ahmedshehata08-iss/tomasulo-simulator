@@ -1,0 +1,21 @@
+# Additional predictor test: branch outcomes T,T,N; younger wrong-path work must be squashed.
+# Author: Ahmed Ahmed
+# Assignment model: one CDB, one memory port, word branch offsets.
+
+# of rs              Cycles in EX    Cycles in Mem    # of FUs
+Integer adder           4               1                          1
+FP adder                3               4                          1
+FP multiplier           2              15                          1
+Load/store unit         5               1               5          1
+
+ROB entries = 64
+Issue width = 1
+F20=7
+
+Addi R1 R0 3
+Addi R2 R0 0
+Addi R2 R2 4
+Addi R1 R1 -1
+Bne R1 R0 -3
+Addi R3 R0 99
+Sd F20 0(R2)
