@@ -56,7 +56,10 @@ insensitive, commas are optional, and `#`, `//`, and `;` begin comments.
 Supported instructions: `Ld`, `Sd`, `Beq`, `Bne`, `Add`, `Sub`, `Addi`,
 `Add.d`, `Sub.d`, and `Mult.d`. Integer and floating point registers are
 separate 32-entry files. Loads/stores use F registers for data and R registers
-for the base address. Integers use Python integers; FP uses Python floats.
+for the base address. Integers use Python integers. FP registers and `.d` arithmetic use Python
+binary64 floats; initialized memory, `Sd`, `Ld`, and forwarded load values are
+rounded to IEEE binary32 (nearest, ties to even). Overflow rounds to signed
+infinity. The original FP register is not rounded by a store.
 
 Default hardware: 128 ROB entries; integer RS/EX/FUs = 2/1/1; FP adder =
 3/3/1; FP multiplier = 2/20/1; LSQ/address-EX/address-FUs = 3/1/1;
@@ -111,8 +114,8 @@ one non-pipelined port.
 
 `tests/oracle.py` is an independent sequential interpreter with its own
 assembly parsing. It checks all 64 registers and all 64 memory words against
-simulator outcomes. The 44 test methods include 72 seeded differential
-configurations, plus deterministic timing/hazard/branch/memory/parser/CLI
+simulator outcomes. The 55 test methods include 120 seeded differential
+configurations and 21 deterministic binary32 configurations, plus deterministic timing/hazard/branch/memory/parser/CLI
 checks. Timing expectations are checked separately from the functional oracle.
 
 `run_experiments.py` runs seven benchmarks at widths 1,2,3,4 and asserts exact
@@ -122,12 +125,25 @@ benchmark. `results/summary.csv` and `summary.json` contain the comparison;
 records the test run. `REPORT.pdf` contains the two required assignment sections:
 "Brief description what you have added to the code" and
 "Show results of test cases under different issue width". The code was rerun
-on October 15, 2026: 44 test methods, 72 seeded differential configurations,
-and all 28 benchmark configurations passed. See `results/validation.json`,
+on October 25, 2026: 55 test methods, 120 seeded differential configurations,
+21 binary32 configurations, and all 28 benchmark configurations passed.
+Compilation and CLI checks also passed. A separate stress review ran 400
+40-instruction programs at all four widths (1,600 configurations); all matched
+the oracle, including 63 memory replays. Reproduce it with
+`python3 -m tests.stress_review`; its result is `results/stress_review.json`. See `results/validation.json`,
 `results/experiment_log.txt`, and `results/cli_smoke_log.txt` for the rerun evidence.
 
-No known failing cases remain in the included tests. This is a functional
-teaching simulator: FP arithmetic is not a bit-accurate IEEE ISA model, and
-there are no caches, virtual memory, interrupts, or operating-system effects.
-These are outside the supplied assignment. Run commands above to reproduce
+No known failing cases remain in the included tests. The review corrected
+a real gap in the previous version: single-precision memory transfers had
+retained Python binary64 precision, including forwarding. The revised report
+contains the requirement checklist, eight code-change topics, all seven
+benchmark definitions and final states, and all 28 committed timing tables.
+
+This is a functional teaching simulator. It does not model FP control/status
+registers, alternate rounding modes, fixed-width integer overflow, caches,
+virtual memory, interrupts, or operating-system effects; these details are
+not specified by the assignment. Aligned word access is an explicit assumption:
+the handout describes 64 words but its illustrative `R1=10; Ld F4,8(R1)` yields
+unaligned byte address 18. The simulator rejects that address because the
+handout provides no unaligned-access semantics. Run commands above to reproduce
 results before submission.

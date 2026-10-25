@@ -7,6 +7,7 @@ its own expected answers.
 """
 
 from dataclasses import dataclass
+from ctypes import c_float
 import re
 
 
@@ -36,7 +37,8 @@ def execute(source: str, max_steps: int = 10000) -> ArchitecturalState:
             register = register.upper()
             registers[register] = int(float(value)) if register[0] == "R" else float(value)
         for address, value in re.findall(rf"Mem\s*\[\s*(\d+)\s*\]\s*=\s*({number})", line, re.I):
-            memory[int(address)] = float(value)
+            # Independently use C float conversion, not the simulator helper.
+            memory[int(address)] = c_float(float(value)).value
     registers["R0"] = 0
     pc = steps = 0
     while pc < len(code):
@@ -66,7 +68,7 @@ def execute(source: str, max_steps: int = 10000) -> ArchitecturalState:
             if op == "LD":
                 registers[floating_register] = memory[address]
             else:
-                memory[address] = registers[floating_register]
+                memory[address] = c_float(registers[floating_register]).value
         elif op in ("BEQ", "BNE"):
             left, right, offset = args
             equal = registers[left] == registers[right]

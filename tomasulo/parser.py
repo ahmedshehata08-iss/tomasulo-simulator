@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 from .model import Config, Instruction, Program, UnitConfig
+from .numeric import memory_word
 
 
 _INTEGER = re.compile(r"[+-]?(?:0[xX][0-9a-fA-F]+|[0-9]+)\Z")
@@ -165,7 +166,7 @@ def parse_text(text: str) -> Program:
                         address = _integer(address_text, "memory address")
                         if address % 4 or not 0 <= address <= 252:
                             raise ValueError("memory addresses must be aligned byte addresses from 0 to 252")
-                        memory[address] = _number(token)
+                        memory[address] = memory_word(_number(token))
                     else:
                         kind = target[0].upper()
                         register = _register(target, kind)

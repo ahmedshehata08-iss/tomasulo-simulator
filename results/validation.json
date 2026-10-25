@@ -1,10 +1,34 @@
 {
   "python": "3.12.14",
-  "platform": "Linux-6.18.44-x86_64-with-glibc2.39",
-  "source_commit": "739dabd944cdce19ceb9cc5e4a6baa4566b1fc5f",
-  "started_at_utc": "2026-10-15T23:38:09.415880+00:00",
-  "completed_at_utc": "2026-10-15T23:38:09.886903+00:00",
-  "completed_at_local": "2026-10-15T18:38:09.886903-05:00",
+  "platform": "Linux-6.18.55-x86_64-with-glibc2.39",
+  "base_commit": "f8caa84d7046f6eb9a181c74024d8dd7ccb6fcb1",
+  "source_revision_description": "Audited local revision based on base_commit; exact tested source bytes are identified below.",
+  "source_sha256": {
+    "benchmarks/branch_recovery.in": "dce5b12a9bcc1788cec1df7695ddb6a5344e3e2268fd2e3463edb207449c241a",
+    "benchmarks/corrected_starter.in": "c3762c260e9d2821bef06e36089799e5cb58e0ba6d6eeba0737785bb371c426c",
+    "benchmarks/dependency_chain.in": "cc91c70612f4368386f1fc202be5ba89577f730c62322ffa4039ca67ad29f0dd",
+    "benchmarks/forwarding.in": "a267e9d7fb2be57a6991d6eb1181e643e505bb10e83a99f36541626c21a838f0",
+    "benchmarks/memory_replay.in": "02f40609b03b6cfafcf22de26b512247e5b110c74d238cf881f2e62ca957c8b9",
+    "benchmarks/mixed_independent.in": "7333f597ff1151d317b32e910caa51ca6edb13db67f941f9220d6728e5e0b921",
+    "benchmarks/original_code.in": "f36b04294e8d9ddb6667e8d953370da6d3b1ad52056c8c657d52a078fd1daca9",
+    "benchmarks/resource_pressure.in": "6b148671c175f497970756108c3839497dbf1e3e7eb55201ee1116f63ae336c4",
+    "main.py": "6be8b9377214d90aff923318c4ee433bca7a04e9b240a224417a6e4dd7daefeb",
+    "run_experiments.py": "a17b8b4a8c3266ee987440b22d2a55e14e42b6aeffdf547bdb386aad4f421f3f",
+    "tests/__init__.py": "1ce12144b6845d0c4e29da9c305b5f39ab0b2d5546ed362caaf605f33efbe7c6",
+    "tests/oracle.py": "4b59318a7ea72c2dfbc75136f1fab33b059fb777ff1a6c499b7827ddb4a47e44",
+    "tests/test_memory_precision.py": "64952f92a5796cb175a1ae372ef085135e08b4dc756a93ee26d4a27674d950a6",
+    "tests/test_simulator.py": "1860d9d8858f2a58e512fc10953ad34f1584b22f76857f75d30cb7048c5a2268",
+    "tomasulo/__init__.py": "093aad2327ffd86587ff03fb5bda179ef1f77a6925f4b274f50c843e2d0fb2ad",
+    "tomasulo/engine.py": "46991b65ae49f72267bebfafdcc70549dfa8a28f56995b39ac619d9f0b9a4a90",
+    "tomasulo/model.py": "b36022d2236bbfb324f4f21d2858375990b094140312a665cd7a8d59788253df",
+    "tomasulo/numeric.py": "2fe2e465dc90c394cef4090eb4931abb5ef1470f1277faa664ef260e47a6e189",
+    "tomasulo/output.py": "e87eb1a300dea9661eec4759fbdb9f729475faf8ee80d24f7620985affa5d052",
+    "tomasulo/parser.py": "2af5ef25bfb60371ea9b89e66ab97dc83216031b7d4fefa5e8e06fb558b27239",
+    "tests/stress_review.py": "55f8688f21b6566ce20d5376e339dfbafc1513935509bcb97510f3734375693f"
+  },
+  "started_at_utc": "2026-10-25T17:40:38.780672+00:00",
+  "completed_at_utc": "2026-10-25T17:40:39.559728+00:00",
+  "completed_at_local": "2026-10-25T12:40:39.559728-05:00",
   "local_timezone": "America/Chicago",
   "commands": [
     {
@@ -21,14 +45,20 @@
       "command": "python3 main.py benchmarks/corrected_starter.in --issue-width 4",
       "exit_code": 0,
       "log": "results/cli_smoke_log.txt"
+    },
+    {
+      "command": "python3 -m compileall -q main.py run_experiments.py tomasulo tests",
+      "exit_code": 0,
+      "log": "results/compile_log.txt"
     }
   ],
   "test_command": "python3 -m unittest discover -s tests -v",
   "exit_code": 0,
-  "test_methods": 44,
-  "test_runtime_seconds": 0.28,
-  "seeded_differential_configurations": 72,
+  "test_methods": 55,
+  "test_runtime_seconds": 0.464,
+  "seeded_differential_configurations": 120,
   "seeded_differential_breakdown": {
+    "test_seeded_delayed_address_memory_programs": 48,
     "test_seeded_random_straight_line_programs": 40,
     "test_seeded_bounded_branch_programs": 32
   },
@@ -43,5 +73,26 @@
   ],
   "all_experiment_architectural_results_match_oracle": true,
   "summary_unchanged_from_previous_run": true,
-  "cli_smoke_status": "PASS"
+  "cli_smoke_status": "PASS",
+  "compile_status": "PASS",
+  "binary32_precision_test_methods": 6,
+  "binary32_precision_simulation_configurations": 21,
+  "binary32_precision_configuration_description": "Five methods each run widths 1-4 (20); one direct Program initialization case (1).",
+  "additional_stress_review": {
+    "random_programs": 400,
+    "issue_widths": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "configurations": 1600,
+    "status": "PASS",
+    "memory_replays_observed": 63,
+    "elapsed_seconds": 2.85,
+    "seed_base": 884231,
+    "details": "40 instructions per program; computed byte-address bases, loads/stores, FP arithmetic, varied RS/ROB/FU/latency. Compared all register and memory values against independent sequential oracle."
+  },
+  "additional_stress_command": "python3 -m tests.stress_review",
+  "additional_stress_exit_code": 0
 }

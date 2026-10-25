@@ -1,0 +1,15 @@
+{
+  "random_programs": 400,
+  "issue_widths": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "configurations": 1600,
+  "status": "PASS",
+  "memory_replays_observed": 63,
+  "elapsed_seconds": 2.85,
+  "seed_base": 884231,
+  "details": "40 instructions per program; computed byte-address bases, loads/stores, FP arithmetic, varied RS/ROB/FU/latency. Compared all register and memory values against independent sequential oracle."
+}

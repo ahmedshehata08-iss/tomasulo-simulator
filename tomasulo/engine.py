@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .model import Program
+from .numeric import memory_word
 
 
 @dataclass
@@ -68,7 +69,8 @@ class Simulator:
         self.registers.update(program.registers)
         self.registers['R0'] = 0
         self.memory = {i: 0.0 for i in range(0, 256, 4)}
-        self.memory.update(program.memory)
+        self.memory.update({address: memory_word(value)
+                            for address, value in program.memory.items()})
         self.rat: dict[str, int] = {}
         self.rob: list[Entry] = []
         self.entries: dict[int, Entry] = {}
@@ -325,7 +327,8 @@ class Simulator:
         _, tag, value = self.memory_job
         entry = self.entries[tag]
         if entry.instruction.op == 'ld':
-            entry.value = self.memory[entry.address] if value is None else value
+            # Forwarding and a committed-memory read must round identically.
+            entry.value = memory_word(self.memory[entry.address] if value is None else value)
             entry.complete_cycle = self.cycle
             entry.state = 'result'
             self.stats['forwarded_loads'] += int(entry.trace['forwarded'])
@@ -361,7 +364,7 @@ class Simulator:
                 return
             if entry.fault:
                 raise ValueError(entry.fault)
-            self.memory[entry.address] = self.memory_job[2]
+            self.memory[entry.address] = memory_word(self.memory_job[2])
             self.memory_job = None
             self.lsq.remove(entry.tag)
         elif op in ('beq', 'bne'):

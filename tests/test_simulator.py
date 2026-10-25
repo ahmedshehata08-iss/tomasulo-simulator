@@ -222,6 +222,23 @@ class TimingTests(SimulatorTestCase):
                 self.assertLessEqual(max(Counter(issued).values()), width)
                 self.assertEqual([r["pc"] for r in result.history], list(range(17)))
 
+    def test_full_rs_blocks_younger_instruction_of_another_kind(self):
+        # The FP instruction is independent and has a free RS, but it must not
+        # bypass the older integer instruction that cannot yet be issued.
+        result = self.equivalent(source(
+            "Addi R1 R0 1\nAddi R2 R0 2\nAdd.d F2 F0 F0",
+            width=4, int_rs=1))
+        first, blocked, younger = result.history
+        self.assertGreater(blocked["issue"], first["issue"])
+        self.assertEqual(younger["issue"], blocked["issue"])
+
+    def test_full_rob_stalls_issue_until_next_cycle_after_commit(self):
+        result = self.equivalent(source(
+            "Mult.d F2 F4 F6\nAddi R1 R0 1", width=4, rob=1,
+            mul_ex=5, initial="F4=2,F6=3"))
+        older, younger = result.history
+        self.assertEqual(younger["issue"], older["commit"] + 1)
+
 
 class SpeculationTests(SimulatorTestCase):
     def test_wrong_path_invalid_branch_does_not_poison_btb(self):
@@ -366,8 +383,61 @@ class MemoryTests(SimulatorTestCase):
             width=4, ls_rs=2, rob=4, mem=2)
         self.equivalent(text)
 
+    def test_completed_load_releases_lsq_before_its_commit(self):
+        # A long older multiply blocks retirement. A one-entry LSQ must still
+        # admit the second load as soon as the first load has received data.
+        result = self.equivalent(source(
+            "Mult.d F30 F28 F28\nLd F2 0(R0)\nLd F4 4(R0)",
+            width=4, mul_ex=20, ls_rs=1, mem=2,
+            initial="F28=2,Mem[0]=3,Mem[4]=7"))
+        _, first_load, second_load = result.history
+        self.assertEqual(second_load["issue"], first_load["mem_end"] + 1)
+        self.assertLess(second_load["issue"], first_load["commit"])
+
+    def test_intervening_matching_store_prevents_unnecessary_replay(self):
+        # The first store resolves late, but the load has correctly forwarded
+        # from a younger same-address store that supersedes it.
+        result = self.equivalent(source(
+            "Addi R1 R0 16\nSd F2 0(R1)\nSd F4 16(R0)\nLd F6 16(R0)",
+            width=4, int_ex=12, ls_fu=2, mem=2,
+            initial="F2=7,F4=9,Mem[16]=99"))
+        late_store, load = result.history[1], result.history[3]
+        self.assertLess(load["mem_end"], late_store["ex_end"])
+        self.assertTrue(load["forwarded"])
+        self.assertEqual(result.stats["memory_replays"], 0)
+        self.assertEqual(result.registers["F6"], 9)
+
 
 class DifferentialTests(SimulatorTestCase):
+    def test_seeded_delayed_address_memory_programs(self):
+        # 12 seeds x four issue widths = 48 comparisons. Base registers are
+        # repeatedly renamed, so stores can have unresolved addresses while
+        # younger loads and independent FP operations execute speculatively.
+        for seed in range(12):
+            rng = random.Random(140200 + seed)
+            initial = "R1=0,R2=4,R3=8,R4=12,F0=0.5,F1=1.5,F2=-2,F3=3\n" + ",".join(
+                f"Mem[{i * 4}]={rng.randint(-6, 6)}" for i in range(16))
+            code = []
+            for _ in range(48):
+                kind = rng.randrange(6)
+                base, address = rng.randrange(1, 5), 4 * rng.randrange(16)
+                if kind == 0:
+                    code.append(f"Addi R{base} R0 {address}")
+                elif kind in (1, 2):
+                    code.append(f"Ld F{rng.randrange(4, 12)} 0(R{base})")
+                elif kind in (3, 4):
+                    code.append(f"Sd F{rng.randrange(12)} 0(R{base})")
+                else:
+                    code.append(f"Add.d F{rng.randrange(4, 12)} F{rng.randrange(12)} F{rng.randrange(12)}")
+            for width in range(1, 5):
+                with self.subTest(seed=seed, width=width):
+                    self.equivalent(source("\n".join(code), width=width,
+                        int_ex=3 + seed % 5, int_fu=1 + seed % 2,
+                        fp_ex=1 + seed % 4, fp_fu=1 + seed % 2,
+                        ls_ex=1 + seed % 3, ls_fu=1 + seed % 3,
+                        mem=1 + seed % 5, ls_rs=2 + seed % 6,
+                        rob=6 + seed % 8, initial=initial))
+
     def test_seeded_random_straight_line_programs(self):
         # 10 seeds x four issue widths = 40 independent architectural comparisons.
         for seed in range(10):
